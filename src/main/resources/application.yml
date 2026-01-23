@@ -1,13 +1,12 @@
 spring:
   application:
     name: achiever
-  
-  # Virtual threads for high concurrency
+
   threads:
     virtual:
       enabled: true
-  
-  # Database
+
+  # Database - default for local
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:achiever}
     username: ${DB_USERNAME:postgres}
@@ -16,7 +15,7 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
       connection-timeout: 20000
-  
+
   jpa:
     hibernate:
       ddl-auto: validate
@@ -26,14 +25,12 @@ spring:
         format_sql: true
         jdbc:
           time_zone: UTC
-  
-  # Flyway migrations
+
   flyway:
     enabled: true
     baseline-on-migrate: true
     locations: classpath:db/migration
 
-  # Security - OAuth2
   security:
     oauth2:
       client:
@@ -50,19 +47,17 @@ spring:
             token-uri: https://www.strava.com/oauth/token
             user-info-uri: https://www.strava.com/api/v3/athlete
 
-# App-specific config
 app:
   jwt:
     secret: ${JWT_SECRET:your-256-bit-secret-key-change-in-production-please}
-    expiration-ms: 86400000  # 24 hours
-  
+    expiration-ms: 86400000
+
   strava:
     api-base-url: https://www.strava.com/api/v3
-  
+
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
   base-url: ${APP_BASE_URL:http://localhost:8080}
 
-# Logging
 logging:
   level:
     com.achiever: DEBUG
@@ -75,7 +70,12 @@ spring:
   config:
     activate:
       on-profile: prod
-  
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
   jpa:
     hibernate:
       ddl-auto: validate
