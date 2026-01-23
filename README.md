@@ -5,7 +5,7 @@ Fitness challenge platform with Strava integration. Built with Spring Boot 3, Po
 ## Prerequisites
 
 - Java 21+
-- PostgreSQL 15+
+- PostgreSQL 16+
 - Strava API Application (create at https://www.strava.com/settings/api)
 
 ## Quick Start
@@ -14,19 +14,15 @@ Fitness challenge platform with Strava integration. Built with Spring Boot 3, Po
 
 ```bash
 # Create database
-createdb achievr
+createdb achiever
 
 # Or with psql
-psql -c "CREATE DATABASE achievr;"
+psql -c "CREATE DATABASE achiever;"
 ```
 
 ### 2. Configure Environment
 
-Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-cp .env .env
-```
+Create `.env` and fill in your values:
 
 Required variables:
 - `STRAVA_CLIENT_ID` - from Strava API settings
@@ -41,7 +37,7 @@ Required variables:
 
 # Or build and run JAR
 ./mvnw clean package
-java -jar target/achievr-backend-0.0.1-SNAPSHOT.jar
+java -jar target/achiever-backend-0.0.1-SNAPSHOT.jar
 ```
 
 Server starts at `http://localhost:8080`
@@ -119,8 +115,8 @@ Content-Type: application/json
 ## Project Structure
 
 ```
-src/main/java/com/achievr/
-├── AchievrApplication.java     # Main class
+src/main/java/com/achiever/
+├── AchieverApplication.java     # Main class
 ├── config/                     # Security, JWT config
 ├── controller/                 # REST endpoints
 ├── dto/                        # Request/Response DTOs
@@ -144,19 +140,35 @@ Uses standard Java conventions. Recommend IntelliJ IDEA or VS Code with Java ext
 
 ## Deployment
 
-### Railway (Recommended for MVP)
+### Fly.io (Current)
 
-1. Create Railway project
-2. Add PostgreSQL plugin
-3. Add environment variables
-4. Deploy from GitHub
+1. Install Fly CLI: `powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"`
+2. Login: `fly auth login`
+3. Create app: `fly launch --no-deploy`
+4. Create Postgres: `fly postgres create --name achiever-db --region sjc --vm-size shared-cpu-1x --volume-size 1`
+5. Attach database: `fly postgres attach achiever-db --app achiever-backend`
+6. Set secrets:
+```bash
+fly secrets set DB_HOST=achiever-db.internal DB_PORT=5432 DB_NAME=achiever_backend DB_USERNAME=achiever_backend DB_PASSWORD= STRAVA_CLIENT_ID= STRAVA_CLIENT_SECRET= JWT_SECRET= APP_BASE_URL=https://achiever-backend.fly.dev SPRING_PROFILES_ACTIVE=prod --app achiever-backend
+```
+7. Deploy: `fly deploy`
+
+**Production URL:** https://achiever-backend.fly.dev
 
 ### Docker
 
 ```dockerfile
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn clean package -DskipTests
+
 FROM eclipse-temurin:21-jre
-COPY target/*.jar app.jar
-ENTRYPOINT ["java", "-jar", "/app.jar"]
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-Xmx384m", "-Xms128m", "-XX:+UseSerialGC", "-jar", "app.jar"]
 ```
 
 ## License
