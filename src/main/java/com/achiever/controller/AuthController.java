@@ -37,15 +37,21 @@ public class AuthController {
      * Redirect to Strava OAuth
      */
     @GetMapping("/strava")
-    public RedirectView stravaAuth() {
-        String stravaAuthUrl = String.format(
-                "https://www.strava.com/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code&scope=read,activity:read",
-                clientId,
-                URLEncoder.encode(redirectUri, StandardCharsets.UTF_8)
-        );
-        
-        log.info("Redirecting to Strava OAuth: {}", stravaAuthUrl);
-        return new RedirectView(stravaAuthUrl);
+    public RedirectView stravaAuth(@RequestParam(required = false) String prompt) {
+        String scope = "read,activity:read";
+
+        String url = "https://www.strava.com/oauth/authorize" +
+                "?client_id=" + clientId +
+                "&response_type=code" +
+                "&redirect_uri=" + redirectUri +
+                "&scope=" + scope;
+
+        // Если prompt=consent, добавляем approval_prompt=force
+        if ("consent".equals(prompt)) {
+            url += "&approval_prompt=force";
+        }
+
+        return new RedirectView(url);
     }
 
     /**
