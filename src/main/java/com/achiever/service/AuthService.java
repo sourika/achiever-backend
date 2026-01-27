@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -28,43 +29,47 @@ public class AuthService {
     private final StravaConnectionRepository stravaConnectionRepository;
     private final JwtUtils jwtUtils;
 
-    /**
-     * Handle Strava OAuth callback
-     * Creates new user or links existing user
-     */
     @Transactional
     public AuthResponse handleStravaCallback(String code) {
-        // Exchange code for tokens
         StravaTokenResponse tokenResponse = stravaApiClient.exchangeCode(code);
         StravaAthleteResponse athlete = tokenResponse.getAthlete();
 
         log.info("Strava auth for athlete: {} ({})", athlete.getId(), athlete.getEmail());
 
-        // Check if user exists by Strava athlete ID
-        Optional<StravaConnection> existingConnection = 
+        Optional<StravaConnection> existingConnection =
                 stravaConnectionRepository.findByAthleteId(athlete.getId());
 
         User user;
         if (existingConnection.isPresent()) {
-            // Existing user - update tokens
             StravaConnection connection = existingConnection.get();
             updateStravaTokens(connection, tokenResponse);
             user = connection.getUser();
             log.info("Existing user logged in: {}", user.getId());
         } else {
-            // New user - create account
             user = createNewUser(athlete, tokenResponse);
             log.info("New user created: {}", user.getId());
         }
 
-        // Generate JWT
         String token = jwtUtils.generateToken(user.getId(), user.getEmail());
 
         return new AuthResponse(token, mapToUserDTO(user));
     }
 
+    /**
+     * Generate token for email/password login
+     */
+    public String generateToken(User user) {
+        return jwtUtils.generateToken(user.getId(), user.getEmail());
+    }
+
+    /**
+     * Validate token and extract user ID
+     */
+    public UUID validateTokenAndGetUserId(String token) {
+        return jwtUtils.getUserIdFromToken(token);
+    }
+
     private User createNewUser(StravaAthleteResponse athlete, StravaTokenResponse tokens) {
-        // Generate username from Strava name
         String username = generateUsername(athlete);
 
         User user = User.builder()
@@ -75,7 +80,6 @@ public class AuthService {
 
         user = userRepository.save(user);
 
-        // Create Strava connection
         StravaConnection connection = StravaConnection.builder()
                 .user(user)
                 .athleteId(athlete.getId())
@@ -99,11 +103,10 @@ public class AuthService {
     }
 
     private String generateUsername(StravaAthleteResponse athlete) {
-        String base = athlete.getFirstname() != null 
-                ? athlete.getFirstname().toLowerCase() 
+        String base = athlete.getFirstname() != null
+                ? athlete.getFirstname().toLowerCase()
                 : "user";
-        
-        // Add numbers if username exists
+
         String username = base;
         int counter = 1;
         while (userRepository.existsByUsername(username)) {
@@ -122,7 +125,8 @@ public class AuthService {
                 user.getUsername(),
                 user.getEmail(),
                 user.getTimezone(),
-                user.getStravaConnection() != null
+                user.getStravaConnection() != null,
+                user.getPasswordHash() != null
         );
     }
 }

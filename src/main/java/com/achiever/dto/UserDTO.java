@@ -7,5 +7,6 @@ public record UserDTO(
         String username,
         String email,
         String timezone,
-        boolean stravaConnected
+        boolean stravaConnected,
+        boolean hasPassword
 ) {}

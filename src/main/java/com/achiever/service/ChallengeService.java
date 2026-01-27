@@ -238,7 +238,8 @@ public class ChallengeService {
                         challenge.getCreatedBy().getUsername(),
                         challenge.getCreatedBy().getEmail(),
                         challenge.getCreatedBy().getTimezone(),
-                        challenge.getCreatedBy().getStravaConnection() != null
+                        challenge.getCreatedBy().getStravaConnection() != null,
+                        challenge.getCreatedBy().getPasswordHash() != null
                 ),
                 participants
         );

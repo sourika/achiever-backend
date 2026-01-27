@@ -1,8 +1,8 @@
 package com.achiever.controller;
 
-import com.achiever.dto.AuthResponse;
-import com.achiever.dto.UserDTO;
+import com.achiever.dto.*;
 import com.achiever.entity.User;
+import com.achiever.repository.UserRepository;
 import com.achiever.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,11 +10,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -23,6 +25,8 @@ import java.nio.charset.StandardCharsets;
 public class AuthController {
 
     private final AuthService authService;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Value("${spring.security.oauth2.client.registration.strava.client-id}")
     private String clientId;
@@ -93,5 +97,56 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         return ResponseEntity.ok(authService.getCurrentUser(user));
+    }
+
+    @GetMapping("/check-email")
+    public EmailCheckResponse checkEmail(@RequestParam String email) {
+        Optional<User> user = userRepository.findByEmail(email.toLowerCase().trim());
+        if (user.isPresent()) {
+            boolean hasPassword = user.get().getPasswordHash() != null;
+            return new EmailCheckResponse(true, hasPassword);
+        }
+        return new EmailCheckResponse(false, false);
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+        Optional<User> userOpt = userRepository.findByEmail(request.getEmail().toLowerCase().trim());
+
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("error", "User not found"));
+        }
+
+        User user = userOpt.get();
+
+        if (user.getPasswordHash() == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Password not set. Please login with Strava."));
+        }
+
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid password"));
+        }
+
+        String token = authService.generateToken(user);
+        return ResponseEntity.ok(Map.of("token", token));
+    }
+
+    @PostMapping("/set-password")
+    public ResponseEntity<?> setPassword(@RequestBody SetPasswordRequest request,
+                                         @RequestHeader("Authorization") String authHeader) {
+        try {
+            String token = authHeader.replace("Bearer ", "");
+            UUID userId = authService.validateTokenAndGetUserId(token);
+
+            User user = userRepository.findById(userId)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+            userRepository.save(user);
+
+            return ResponseEntity.ok(Map.of("message", "Password set successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid token"));
+        }
     }
 }
