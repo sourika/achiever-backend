@@ -5,12 +5,13 @@ import com.achiever.entity.SportType;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public record ChallengeDTO(
         UUID id,
         String inviteCode,
-        SportType sportType,
+        Set<SportType> sportTypes,
         LocalDate startAt,
         LocalDate endAt,
         ChallengeStatus status,

@@ -5,7 +5,9 @@ import lombok.*;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -28,9 +30,9 @@ public class Challenge {
     @Column(name = "invite_code", unique = true, nullable = false, length = 12)
     private String inviteCode;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "sport_type", nullable = false, length = 20)
-    private SportType sportType;
+    // Stores comma-separated sport types like "RUN,SWIM,RIDE"
+    @Column(name = "sport_types", nullable = false, length = 50)
+    private String sportTypes;
 
     @Column(name = "start_at", nullable = false)
     private LocalDate startAt;
@@ -54,5 +56,29 @@ public class Challenge {
     public void addParticipant(ChallengeParticipant participant) {
         participants.add(participant);
         participant.setChallenge(this);
+    }
+
+    // Helper to get sport types as Set
+    public Set<SportType> getSportTypeSet() {
+        Set<SportType> types = new HashSet<>();
+        if (sportTypes != null && !sportTypes.isEmpty()) {
+            for (String type : sportTypes.split(",")) {
+                types.add(SportType.valueOf(type.trim()));
+            }
+        }
+        return types;
+    }
+
+    // Helper to set sport types from Set
+    public void setSportTypeSet(Set<SportType> types) {
+        if (types == null || types.isEmpty()) {
+            this.sportTypes = "";
+        } else {
+            this.sportTypes = types.stream()
+                    .map(Enum::name)
+                    .sorted()
+                    .reduce((a, b) -> a + "," + b)
+                    .orElse("");
+        }
     }
 }

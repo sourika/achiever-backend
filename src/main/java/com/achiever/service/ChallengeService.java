@@ -8,12 +8,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -30,7 +30,7 @@ public class ChallengeService {
     private static final SecureRandom random = new SecureRandom();
 
     /**
-     * Create a new challenge
+     * Create a new challenge with multiple sports
      */
     @Transactional
     public ChallengeDTO createChallenge(User creator, CreateChallengeRequest request) {
@@ -40,31 +40,40 @@ public class ChallengeService {
             throw new IllegalArgumentException("End date must be after start date");
         }
 
+        // Validate goals - at least one sport must be selected
+        if (request.goals() == null || request.goals().isEmpty()) {
+            throw new IllegalArgumentException("At least one sport goal must be specified");
+        }
+
         // Generate unique invite code
         String inviteCode = generateUniqueInviteCode();
+
+        // Get sport types from goals
+        Set<SportType> sportTypes = request.goals().keySet();
 
         Challenge challenge = Challenge.builder()
                 .createdBy(creator)
                 .inviteCode(inviteCode)
-                .sportType(request.sportType())
                 .startAt(request.startAt())
                 .endAt(request.endAt())
                 .status(ChallengeStatus.PENDING)
                 .build();
+        challenge.setSportTypeSet(sportTypes);
 
         challenge = challengeRepository.save(challenge);
 
-        // Add creator as first participant
+        // Add creator as first participant with goals
         ChallengeParticipant participant = ChallengeParticipant.builder()
                 .challenge(challenge)
                 .user(creator)
-                .goalValue(request.goalValue())
                 .build();
+        participant.setGoals(request.goals());
 
         participantRepository.save(participant);
         challenge.getParticipants().add(participant);
 
-        log.info("Challenge created: {} by user {}", challenge.getId(), creator.getId());
+        log.info("Challenge created: {} by user {} with sports: {}", 
+                challenge.getId(), creator.getId(), sportTypes);
 
         return mapToDTO(challenge);
     }
@@ -92,11 +101,20 @@ public class ChallengeService {
             throw new IllegalStateException("Challenge has ended");
         }
 
+        // Validate that goals match challenge sport types
+        Set<SportType> challengeSports = challenge.getSportTypeSet();
+        Set<SportType> goalSports = request.goals().keySet();
+        
+        if (!goalSports.equals(challengeSports)) {
+            throw new IllegalArgumentException(
+                "Goals must be provided for all challenge sports: " + challengeSports);
+        }
+
         ChallengeParticipant participant = ChallengeParticipant.builder()
                 .challenge(challenge)
                 .user(user)
-                .goalValue(request.goalValue())
                 .build();
+        participant.setGoals(request.goals());
 
         participantRepository.save(participant);
         challenge.getParticipants().add(participant);
@@ -137,6 +155,8 @@ public class ChallengeService {
         List<DailyProgress> currentProgress = progressRepository
                 .findCurrentProgressByChallengeId(challengeId);
 
+        Set<SportType> challengeSports = challenge.getSportTypeSet();
+
         List<ParticipantProgressDTO> participantProgress = challenge.getParticipants().stream()
                 .map(p -> {
                     DailyProgress progress = currentProgress.stream()
@@ -144,12 +164,38 @@ public class ChallengeService {
                             .findFirst()
                             .orElse(null);
 
+                    Map<SportType, BigDecimal> goals = p.getGoals();
+                    Map<SportType, Integer> distances = new HashMap<>();
+                    Map<SportType, Integer> sportPercents = new HashMap<>();
+
+                    // Calculate progress for each sport
+                    for (SportType sport : challengeSports) {
+                        int distance = progress != null ? progress.getDistanceMeters(sport) : 0;
+                        distances.put(sport, distance);
+
+                        BigDecimal goalKm = goals.get(sport);
+                        int percent = 0;
+                        if (goalKm != null && goalKm.compareTo(BigDecimal.ZERO) > 0) {
+                            int goalMeters = goalKm.multiply(BigDecimal.valueOf(1000)).intValue();
+                            percent = Math.min(100, (int) ((distance * 100L) / goalMeters));
+                        }
+                        sportPercents.put(sport, percent);
+                    }
+
+                    // Calculate overall progress as average of all sports (capped at 100 each)
+                    int overallPercent = sportPercents.isEmpty() ? 0 :
+                            (int) sportPercents.values().stream()
+                                    .mapToInt(Integer::intValue)
+                                    .average()
+                                    .orElse(0);
+
                     return new ParticipantProgressDTO(
                             p.getUser().getId(),
                             p.getUser().getUsername(),
-                            p.getGoalValue(),
-                            progress != null ? progress.getDistanceMeters() : 0,
-                            progress != null ? progress.getProgressPercent() : 0
+                            goals,
+                            distances,
+                            sportPercents,
+                            overallPercent
                     );
                 })
                 .toList();
@@ -160,6 +206,7 @@ public class ChallengeService {
         return new ChallengeProgressDTO(
                 challenge.getId(),
                 challenge.getStatus(),
+                challengeSports,
                 challenge.getStartAt(),
                 challenge.getEndAt(),
                 timeRemaining,
@@ -220,7 +267,7 @@ public class ChallengeService {
                 .map(p -> new ParticipantDTO(
                         p.getUser().getId(),
                         p.getUser().getUsername(),
-                        p.getGoalValue(),
+                        p.getGoals(),
                         p.getJoinedAt()
                 ))
                 .toList();
@@ -228,7 +275,7 @@ public class ChallengeService {
         return new ChallengeDTO(
                 challenge.getId(),
                 challenge.getInviteCode(),
-                challenge.getSportType(),
+                challenge.getSportTypeSet(),
                 challenge.getStartAt(),
                 challenge.getEndAt(),
                 challenge.getStatus(),

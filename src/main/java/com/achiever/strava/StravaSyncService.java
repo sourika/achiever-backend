@@ -8,10 +8,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -102,7 +106,7 @@ public class StravaSyncService {
     }
 
     /**
-     * Calculate and update progress for a user in a challenge
+     * Calculate and update progress for a user in a challenge (multi-sport)
      */
     @Transactional
     public void updateChallengeProgress(Challenge challenge, UUID userId) {
@@ -119,20 +123,14 @@ public class StravaSyncService {
                 .atStartOfDay()
                 .atOffset(ZoneOffset.UTC);
 
-        // Map sport type
-        String sportTypeString = mapSportTypeToStrava(challenge.getSportType());
+        // Get sport types for this challenge
+        Set<SportType> sportTypes = challenge.getSportTypeSet();
+        Map<SportType, BigDecimal> goals = participant.getGoals();
 
-        // Sum distance
-        int totalDistance = activityRepository.sumDistanceByUserAndSportTypeAndDateRange(
-                userId, sportTypeString, startDateTime, endDateTime);
+        // Calculate progress for each sport
+        int totalNormalizedPercent = 0;
+        int sportCount = 0;
 
-        // Calculate percentage (capped at 100)
-        int goalMeters = participant.getGoalMeters();
-        int percent = goalMeters > 0 
-                ? Math.min(100, (totalDistance * 100) / goalMeters) 
-                : 0;
-
-        // Upsert daily progress
         LocalDate today = LocalDate.now();
         DailyProgress progress = progressRepository
                 .findByChallengeIdAndUserIdAndDate(challenge.getId(), userId, today)
@@ -142,12 +140,42 @@ public class StravaSyncService {
                         .date(today)
                         .build());
 
-        progress.setDistanceMeters(totalDistance);
-        progress.setProgressPercent(percent);
+        int totalDistanceAll = 0;
+
+        for (SportType sportType : sportTypes) {
+            String stravaSportType = mapSportTypeToStrava(sportType);
+            
+            // Sum distance for this sport type
+            int distance = activityRepository.sumDistanceByUserAndSportTypeAndDateRange(
+                    userId, stravaSportType, startDateTime, endDateTime);
+
+            // Update per-sport distance in progress
+            progress.setDistanceMeters(sportType, distance);
+            totalDistanceAll += distance;
+
+            // Calculate normalized percentage for this sport (capped at 100%)
+            BigDecimal goalKm = goals.get(sportType);
+            if (goalKm != null && goalKm.compareTo(BigDecimal.ZERO) > 0) {
+                int goalMeters = goalKm.multiply(BigDecimal.valueOf(1000)).intValue();
+                int percent = Math.min(100, (int) ((distance * 100L) / goalMeters));
+                totalNormalizedPercent += percent;
+                sportCount++;
+                
+                log.debug("Sport {}: {}m / {}m = {}%", sportType, distance, goalMeters, percent);
+            }
+        }
+
+        // Calculate overall progress as average of all sports (per formula)
+        int overallPercent = sportCount > 0 ? totalNormalizedPercent / sportCount : 0;
+
+        // Update progress record
+        progress.setDistanceMeters(totalDistanceAll); // Legacy total
+        progress.setProgressPercent(overallPercent);
+        progress.setUpdatedAt(Instant.now());
         progressRepository.save(progress);
 
-        log.info("Updated progress for user {} in challenge {}: {}m / {}m = {}%",
-                userId, challenge.getId(), totalDistance, goalMeters, percent);
+        log.info("Updated multi-sport progress for user {} in challenge {}: overall {}% ({} sports)",
+                userId, challenge.getId(), overallPercent, sportCount);
     }
 
     private String mapSportType(String stravaSportType) {
@@ -156,6 +184,7 @@ public class StravaSyncService {
             case "run", "trailrun", "virtualrun" -> "Run";
             case "ride", "virtualride", "ebikeride", "mountainbikeride" -> "Ride";
             case "swim" -> "Swim";
+            case "walk", "hike" -> "Walk";
             default -> stravaSportType;
         };
     }
@@ -165,6 +194,7 @@ public class StravaSyncService {
             case RUN -> "Run";
             case RIDE -> "Ride";
             case SWIM -> "Swim";
+            case WALK -> "Walk";
         };
     }
 }
