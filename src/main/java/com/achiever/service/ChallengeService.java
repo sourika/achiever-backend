@@ -170,6 +170,17 @@ public class ChallengeService {
 
         log.info("User {} joined challenge {}", user.getId(), challenge.getId());
 
+        // Update status when second participant joins
+        if (challenge.getParticipants().size() >= 2 && challenge.getStatus() == ChallengeStatus.PENDING) {
+            LocalDate today = LocalDate.now();
+            if (challenge.getStartAt().isAfter(today)) {
+                challenge.setStatus(ChallengeStatus.SCHEDULED);
+            } else {
+                challenge.setStatus(ChallengeStatus.ACTIVE);
+            }
+            challengeRepository.save(challenge);
+        }
+
         return mapToDTO(challenge);
     }
 
