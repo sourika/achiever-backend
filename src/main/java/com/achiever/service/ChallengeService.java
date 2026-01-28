@@ -95,6 +95,38 @@ public class ChallengeService {
         return mapToDTO(challenge);
     }
 
+    @Transactional
+    public ChallengeDTO updateChallenge(UUID challengeId, UpdateChallengeRequest request, User user) {
+        Challenge challenge = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
+
+        // Only creator can update
+        if (!challenge.getCreatedBy().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("Only the creator can update this challenge");
+        }
+
+        if (request.name() != null) {
+            challenge.setName(request.name());
+        }
+
+        challenge = challengeRepository.save(challenge);
+        return mapToDTO(challenge);
+    }
+
+    @Transactional
+    public void deleteChallenge(UUID challengeId, User user) {
+        Challenge challenge = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
+
+        // Only creator can delete
+        if (!challenge.getCreatedBy().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("Only the creator can delete this challenge");
+        }
+
+        challengeRepository.delete(challenge);
+        log.info("Challenge {} deleted by user {}", challengeId, user.getId());
+    }
+
     /**
      * Join challenge by invite code
      */

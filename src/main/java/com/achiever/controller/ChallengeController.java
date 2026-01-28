@@ -44,6 +44,22 @@ public class ChallengeController {
         return ResponseEntity.ok(challengeService.getChallenge(id));
     }
 
+    @PatchMapping("/{id}")
+    public ResponseEntity<ChallengeDTO> updateChallenge(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateChallengeRequest request,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(challengeService.updateChallenge(id, request, user));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteChallenge(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User user) {
+        challengeService.deleteChallenge(id, user);
+        return ResponseEntity.noContent().build();
+    }
+
     /**
      * Get challenge preview by invite code (public)
      */
