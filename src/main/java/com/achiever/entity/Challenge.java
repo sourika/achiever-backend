@@ -40,6 +40,9 @@ public class Challenge {
     @Column(name = "end_at", nullable = false)
     private LocalDate endAt;
 
+    @Column(name = "name", length = 50)
+    private String name;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     @Builder.Default

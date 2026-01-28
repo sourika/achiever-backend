@@ -14,6 +14,7 @@ public record ChallengeDTO(
         Set<SportType> sportTypes,
         LocalDate startAt,
         LocalDate endAt,
+        String name,
         ChallengeStatus status,
         Instant createdAt,
         UserDTO createdBy,

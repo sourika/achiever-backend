@@ -69,6 +69,7 @@ public class ChallengeService {
 
         Challenge challenge = Challenge.builder()
                 .createdBy(creator)
+                .name(request.name())
                 .inviteCode(inviteCode)
                 .startAt(request.startAt())
                 .endAt(request.endAt())
@@ -294,6 +295,7 @@ public class ChallengeService {
                 challenge.getSportTypeSet(),
                 challenge.getStartAt(),
                 challenge.getEndAt(),
+                challenge.getName(),
                 challenge.getStatus(),
                 challenge.getCreatedAt(),
                 new UserDTO(
