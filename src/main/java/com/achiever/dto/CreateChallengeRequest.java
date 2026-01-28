@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.util.Map;
 
 public record CreateChallengeRequest(
-        @NotNull @NotEmpty Map<SportType, @Positive BigDecimal> goals, // sport -> goal in km
-        @NotNull @FutureOrPresent LocalDate startAt,
-        @NotNull @Future LocalDate endAt
+        @NotNull @NotEmpty Map<SportType, @Positive BigDecimal> goals,
+        @NotNull LocalDate startAt,
+        @NotNull LocalDate endAt
 ) {}

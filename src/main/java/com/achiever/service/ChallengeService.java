@@ -34,9 +34,14 @@ public class ChallengeService {
      */
     @Transactional
     public ChallengeDTO createChallenge(User creator, CreateChallengeRequest request) {
+        // Validate start date is not in the past
+        if (request.startAt().isBefore(LocalDate.now())) {
+            throw new IllegalArgumentException("Start date cannot be in the past");
+        }
+
         // Validate dates
-        if (request.endAt().isBefore(request.startAt()) || 
-            request.endAt().isEqual(request.startAt())) {
+        if (request.endAt().isBefore(request.startAt()) ||
+                request.endAt().isEqual(request.startAt())) {
             throw new IllegalArgumentException("End date must be after start date");
         }
 
