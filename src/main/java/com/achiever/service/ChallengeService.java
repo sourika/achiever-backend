@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -23,7 +24,6 @@ public class ChallengeService {
     private final ChallengeRepository challengeRepository;
     private final ChallengeParticipantRepository participantRepository;
     private final DailyProgressRepository progressRepository;
-    private final UserRepository userRepository;
 
     private static final String INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int INVITE_CODE_LENGTH = 8;
@@ -34,12 +34,23 @@ public class ChallengeService {
      */
     @Transactional
     public ChallengeDTO createChallenge(User creator, CreateChallengeRequest request) {
+        // Get current date in user's timezone (default to UTC if not provided)
+        ZoneId zoneId = ZoneId.of("UTC");
+        if (request.timezone() != null && !request.timezone().isEmpty()) {
+            try {
+                zoneId = ZoneId.of(request.timezone());
+            } catch (Exception e) {
+                // Invalid timezone, use UTC
+            }
+        }
+        LocalDate today = LocalDate.now(zoneId);
+
         // Validate start date is not in the past
-        if (request.startAt().isBefore(LocalDate.now())) {
+        if (request.startAt().isBefore(today)) {
             throw new IllegalArgumentException("Start date cannot be in the past");
         }
 
-        // Validate dates
+        // Validate dates - end must be after start
         if (request.endAt().isBefore(request.startAt()) ||
                 request.endAt().isEqual(request.startAt())) {
             throw new IllegalArgumentException("End date must be after start date");

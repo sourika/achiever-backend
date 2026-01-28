@@ -9,5 +9,6 @@ import java.util.Map;
 public record CreateChallengeRequest(
         @NotNull @NotEmpty Map<SportType, @Positive BigDecimal> goals,
         @NotNull LocalDate startAt,
-        @NotNull LocalDate endAt
+        @NotNull LocalDate endAt,
+        String timezone  // e.g. "America/Los_Angeles"
 ) {}
