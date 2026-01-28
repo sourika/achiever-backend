@@ -174,6 +174,70 @@ public class ChallengeService {
     }
 
     /**
+     * Leave (forfeit) a challenge
+     */
+    @Transactional
+    public ChallengeDTO leaveChallenge(UUID challengeId, User user) {
+        Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
+                .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
+
+        // Creator cannot leave, only delete
+        if (challenge.getCreatedBy().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("Creator cannot leave. Use delete instead.");
+        }
+
+        // Find participant
+        ChallengeParticipant participant = challenge.getParticipants().stream()
+                .filter(p -> p.getUser().getId().equals(user.getId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("You are not in this challenge"));
+
+        // Check if already forfeited
+        if (participant.hasForfeited()) {
+            throw new IllegalStateException("Already left this challenge");
+        }
+
+        // Mark as forfeited
+        participant.setForfeitedAt(LocalDateTime.now());
+        participantRepository.save(participant);
+
+        log.info("User {} forfeited challenge {}", user.getId(), challengeId);
+
+        return mapToDTO(challenge);
+    }
+
+    /**
+     * Finish challenge early (creator claims win after opponent left)
+     */
+    @Transactional
+    public ChallengeDTO finishChallenge(UUID challengeId, User user) {
+        Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
+                .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
+
+        // Only creator can finish
+        if (!challenge.getCreatedBy().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("Only creator can finish the challenge");
+        }
+
+        // Check if opponent has forfeited
+        boolean opponentForfeited = challenge.getParticipants().stream()
+                .filter(p -> !p.getUser().getId().equals(user.getId()))
+                .anyMatch(ChallengeParticipant::hasForfeited);
+
+        if (!opponentForfeited) {
+            throw new IllegalStateException("Cannot finish: opponent has not left");
+        }
+
+        // Mark challenge as completed
+        challenge.setStatus(ChallengeStatus.COMPLETED);
+        challengeRepository.save(challenge);
+
+        log.info("Challenge {} finished early by creator {}", challengeId, user.getId());
+
+        return mapToDTO(challenge);
+    }
+
+    /**
      * Get challenge by ID
      */
     @Transactional(readOnly = true)
@@ -317,7 +381,8 @@ public class ChallengeService {
                         p.getUser().getId(),
                         p.getUser().getUsername(),
                         p.getGoals(),
-                        p.getJoinedAt()
+                        p.getJoinedAt(),
+                        p.getForfeitedAt()
                 ))
                 .toList();
 

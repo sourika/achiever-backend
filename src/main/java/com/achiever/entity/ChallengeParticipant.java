@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -50,6 +51,14 @@ public class ChallengeParticipant {
     @Column(name = "joined_at", nullable = false)
     @Builder.Default
     private Instant joinedAt = Instant.now();
+
+    @Column(name = "forfeited_at")
+    private LocalDateTime forfeitedAt;
+
+
+    public boolean hasForfeited() {
+        return forfeitedAt != null;
+    }
 
     // Helper to get goals as Map
     public Map<SportType, BigDecimal> getGoals() {

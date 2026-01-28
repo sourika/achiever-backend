@@ -1,0 +1,1 @@
+ALTER TABLE challenge_participants ADD COLUMN IF NOT EXISTS forfeited_at TIMESTAMP;
