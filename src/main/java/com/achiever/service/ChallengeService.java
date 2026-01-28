@@ -150,14 +150,19 @@ public class ChallengeService {
             throw new IllegalStateException("Challenge has ended");
         }
 
-        // Validate that goals match challenge sport types
+        // Add opponent's sports to challenge (merge with existing)
         Set<SportType> challengeSports = challenge.getSportTypeSet();
         Set<SportType> goalSports = request.goals().keySet();
-        
-        if (!goalSports.equals(challengeSports)) {
-            throw new IllegalArgumentException(
-                "Goals must be provided for all challenge sports: " + challengeSports);
+
+        // Validate at least one sport selected
+        if (goalSports.isEmpty()) {
+            throw new IllegalArgumentException("At least one sport must be selected");
         }
+
+        // Merge opponent's sports with existing challenge sports
+        Set<SportType> allSports = new HashSet<>(challengeSports);
+        allSports.addAll(goalSports);
+        challenge.setSportTypeSet(allSports);
 
         ChallengeParticipant participant = ChallengeParticipant.builder()
                 .challenge(challenge)
