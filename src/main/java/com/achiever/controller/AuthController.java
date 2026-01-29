@@ -41,7 +41,7 @@ public class AuthController {
      */
     @GetMapping("/strava")
     public RedirectView stravaAuth(@RequestParam(required = false) String prompt) {
-        String scope = "read,activity:read";
+        String scope = "read,activity:read_all";  // Было: read,activity:read
 
         String url = "https://www.strava.com/oauth/authorize" +
                 "?client_id=" + clientId +
@@ -49,7 +49,6 @@ public class AuthController {
                 "&redirect_uri=" + redirectUri +
                 "&scope=" + scope;
 
-        // Если prompt=consent, добавляем approval_prompt=force
         if ("consent".equals(prompt)) {
             url += "&approval_prompt=force";
         }
