@@ -407,7 +407,18 @@ public class ChallengeService {
      * Update challenge status based on dates (lazy evaluation)
      */
     private void updateStatusIfNeeded(Challenge challenge) {
-        LocalDate today = LocalDate.now();
+        // Use creator's timezone for date comparison
+        ZoneId zoneId = ZoneId.of("UTC");
+        String creatorTimezone = challenge.getCreatedBy().getTimezone();
+        if (creatorTimezone != null && !creatorTimezone.isEmpty()) {
+            try {
+                zoneId = ZoneId.of(creatorTimezone);
+            } catch (Exception e) {
+                // Invalid timezone, use UTC
+            }
+        }
+        LocalDate today = LocalDate.now(zoneId);
+
         ChallengeStatus currentStatus = challenge.getStatus();
         boolean changed = false;
 
