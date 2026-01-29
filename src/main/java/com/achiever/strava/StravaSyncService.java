@@ -4,7 +4,6 @@ import com.achiever.entity.*;
 import com.achiever.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,28 +28,6 @@ public class StravaSyncService {
     private final ChallengeParticipantRepository participantRepository;
     private final ChallengeRepository challengeRepository;
     private final DailyProgressRepository progressRepository;
-
-    /**
-     * Sync activities for all users in active challenges
-     * Runs every 10 minutes
-     */
-    @Scheduled(fixedRate = 600_000) // 10 minutes
-    public void syncActiveParticipants() {
-        log.info("Starting scheduled Strava sync for active participants");
-        
-        List<UUID> userIds = participantRepository.findActiveParticipantUserIds();
-        log.info("Found {} users in active challenges", userIds.size());
-
-        for (UUID userId : userIds) {
-            try {
-                syncUserActivities(userId);
-                // Small delay to respect rate limits
-                Thread.sleep(500);
-            } catch (Exception e) {
-                log.error("Failed to sync activities for user {}", userId, e);
-            }
-        }
-    }
 
     /**
      * Sync activities for a specific user
@@ -108,7 +85,6 @@ public class StravaSyncService {
     /**
      * Calculate and update progress for a user in a challenge (multi-sport)
      */
-    @Transactional
     public void updateChallengeProgress(Challenge challenge, UUID userId) {
         ChallengeParticipant participant = participantRepository
                 .findByChallengeIdAndUserId(challenge.getId(), userId)

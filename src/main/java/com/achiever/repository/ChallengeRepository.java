@@ -28,16 +28,16 @@ public interface ChallengeRepository extends JpaRepository<Challenge, UUID> {
     List<Challenge> findByStatusAndEndAtBefore(ChallengeStatus status, LocalDate date);
 
     @Query("""
-        SELECT DISTINCT c FROM Challenge c 
-        JOIN c.participants p 
-        WHERE p.user.id = :userId 
+        SELECT DISTINCT c FROM Challenge c
+        JOIN c.participants p
+        WHERE p.user.id = :userId
         ORDER BY c.createdAt DESC
         """)
     List<Challenge> findByParticipantUserId(UUID userId);
 
     @Query("""
-        SELECT DISTINCT c FROM Challenge c 
-        JOIN c.participants p 
+        SELECT DISTINCT c FROM Challenge c
+        JOIN c.participants p
         WHERE p.user.id = :userId AND c.status = :status
         ORDER BY c.createdAt DESC
         """)

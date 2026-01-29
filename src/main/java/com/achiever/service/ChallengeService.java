@@ -3,6 +3,7 @@ package com.achiever.service;
 import com.achiever.dto.*;
 import com.achiever.entity.*;
 import com.achiever.repository.*;
+import com.achiever.strava.StravaSyncService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ public class ChallengeService {
     private final ChallengeRepository challengeRepository;
     private final ChallengeParticipantRepository participantRepository;
     private final DailyProgressRepository progressRepository;
+    private final StravaSyncService stravaSyncService;
 
     private static final String INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int INVITE_CODE_LENGTH = 8;
@@ -89,7 +91,7 @@ public class ChallengeService {
         participantRepository.save(participant);
         challenge.getParticipants().add(participant);
 
-        log.info("Challenge created: {} by user {} with sports: {}", 
+        log.info("Challenge created: {} by user {} with sports: {}",
                 challenge.getId(), creator.getId(), sportTypes);
 
         return mapToDTO(challenge);
@@ -186,6 +188,16 @@ public class ChallengeService {
             challengeRepository.save(challenge);
         }
 
+        // Sync Strava data for joining user if challenge is already active
+        if (challenge.getStatus() == ChallengeStatus.ACTIVE && user.getStravaConnection() != null) {
+            try {
+                stravaSyncService.syncUserActivities(user.getId());
+                log.info("Synced Strava for joining user {}", user.getUsername());
+            } catch (Exception e) {
+                log.warn("Failed to sync Strava for joining user {}: {}", user.getUsername(), e.getMessage());
+            }
+        }
+
         return mapToDTO(challenge);
     }
 
@@ -254,12 +266,20 @@ public class ChallengeService {
     }
 
     /**
-     * Get challenge by ID
+     * Get challenge by ID with lazy status update and Strava sync
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public ChallengeDTO getChallenge(UUID challengeId) {
         Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
                 .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
+
+        // Lazy status update
+        updateStatusIfNeeded(challenge);
+
+        // Lazy Strava sync
+        Set<UUID> syncedUserIds = new HashSet<>();
+        syncStravaForParticipants(challenge, syncedUserIds);
+
         return mapToDTO(challenge);
     }
 
@@ -274,12 +294,19 @@ public class ChallengeService {
     }
 
     /**
-     * Get current progress for a challenge
+     * Get current progress for a challenge with lazy sync
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public ChallengeProgressDTO getChallengeProgress(UUID challengeId) {
         Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
                 .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
+
+        // Lazy status update
+        updateStatusIfNeeded(challenge);
+
+        // Lazy Strava sync
+        Set<UUID> syncedUserIds = new HashSet<>();
+        syncStravaForParticipants(challenge, syncedUserIds);
 
         List<DailyProgress> currentProgress = progressRepository
                 .findCurrentProgressByChallengeId(challengeId);
@@ -297,8 +324,8 @@ public class ChallengeService {
                     Map<SportType, Integer> distances = new HashMap<>();
                     Map<SportType, Integer> sportPercents = new HashMap<>();
 
-                    // Calculate progress for each sport
-                    for (SportType sport : challengeSports) {
+                    // Calculate progress for each sport that participant selected
+                    for (SportType sport : goals.keySet()) {
                         int distance = progress != null ? progress.getDistanceMeters(sport) : 0;
                         distances.put(sport, distance);
 
@@ -344,11 +371,23 @@ public class ChallengeService {
     }
 
     /**
-     * Get user's challenges
+     * Get user's challenges with lazy status update and Strava sync
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public List<ChallengeDTO> getUserChallenges(UUID userId) {
-        return challengeRepository.findByParticipantUserId(userId).stream()
+        List<Challenge> challenges = challengeRepository.findByParticipantUserId(userId);
+
+        Set<UUID> syncedUserIds = new HashSet<>();
+
+        for (Challenge challenge : challenges) {
+            // Lazy status update
+            updateStatusIfNeeded(challenge);
+
+            // Lazy Strava sync for active/scheduled challenges
+            syncStravaForParticipants(challenge, syncedUserIds);
+        }
+
+        return challenges.stream()
                 .map(this::mapToDTO)
                 .toList();
     }
@@ -362,6 +401,71 @@ public class ChallengeService {
                 .findByParticipantUserIdAndStatus(userId, ChallengeStatus.ACTIVE).stream()
                 .map(this::mapToDTO)
                 .toList();
+    }
+
+    /**
+     * Update challenge status based on dates (lazy evaluation)
+     */
+    private void updateStatusIfNeeded(Challenge challenge) {
+        LocalDate today = LocalDate.now();
+        ChallengeStatus currentStatus = challenge.getStatus();
+        boolean changed = false;
+
+        // SCHEDULED -> ACTIVE (start date reached)
+        if (currentStatus == ChallengeStatus.SCHEDULED && !challenge.getStartAt().isAfter(today)) {
+            challenge.setStatus(ChallengeStatus.ACTIVE);
+            changed = true;
+            log.info("Challenge {} activated (lazy)", challenge.getId());
+        }
+
+        // ACTIVE -> COMPLETED (end date passed)
+        if (challenge.getStatus() == ChallengeStatus.ACTIVE && challenge.getEndAt().isBefore(today)) {
+            challenge.setStatus(ChallengeStatus.COMPLETED);
+            changed = true;
+            log.info("Challenge {} completed (lazy)", challenge.getId());
+        }
+
+        if (changed) {
+            challengeRepository.save(challenge);
+        }
+    }
+
+    /**
+     * Sync Strava data for all participants in a challenge
+     */
+    private void syncStravaForParticipants(Challenge challenge, Set<UUID> alreadySynced) {
+        // Only sync for active or scheduled challenges
+        if (challenge.getStatus() != ChallengeStatus.ACTIVE &&
+                challenge.getStatus() != ChallengeStatus.SCHEDULED) {
+            return;
+        }
+
+        for (ChallengeParticipant participant : challenge.getParticipants()) {
+            User user = participant.getUser();
+
+            // Skip if already synced this session
+            if (alreadySynced.contains(user.getId())) {
+                continue;
+            }
+
+            // Skip if no Strava connection
+            if (user.getStravaConnection() == null) {
+                continue;
+            }
+
+            // Skip if forfeited
+            if (participant.hasForfeited()) {
+                continue;
+            }
+
+            try {
+                stravaSyncService.syncUserActivities(user.getId());
+                alreadySynced.add(user.getId());
+                log.debug("Synced Strava for user {} (lazy)", user.getUsername());
+            } catch (Exception e) {
+                log.warn("Failed to sync Strava for user {}: {}", user.getUsername(), e.getMessage());
+            }
+        }
     }
 
     private String generateUniqueInviteCode() {
