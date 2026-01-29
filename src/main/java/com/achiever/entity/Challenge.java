@@ -56,6 +56,11 @@ public class Challenge {
     @Builder.Default
     private List<ChallengeParticipant> participants = new ArrayList<>();
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "winner_id")
+    private User winner;
+
+
     public void addParticipant(ChallengeParticipant participant) {
         participants.add(participant);
         participant.setChallenge(this);

@@ -1,0 +1,1 @@
+ALTER TABLE challenges ADD COLUMN winner_id UUID REFERENCES users(id);

@@ -18,5 +18,6 @@ public record ChallengeDTO(
         ChallengeStatus status,
         Instant createdAt,
         UserDTO createdBy,
-        List<ParticipantDTO> participants
+        List<ParticipantDTO> participants,
+        UUID winnerId
 ) {}

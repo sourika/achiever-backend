@@ -443,8 +443,15 @@ public class ChallengeService {
         // ACTIVE -> COMPLETED (end date passed)
         if (challenge.getStatus() == ChallengeStatus.ACTIVE && challenge.getEndAt().isBefore(today)) {
             challenge.setStatus(ChallengeStatus.COMPLETED);
+
+            // Determine winner
+            User winner = determineWinner(challenge);
+            challenge.setWinner(winner);
+
             changed = true;
-            log.info("Challenge {} completed (lazy)", challenge.getId());
+            log.info("Challenge {} completed (lazy), winner: {}",
+                    challenge.getId(),
+                    winner != null ? winner.getUsername() : "tie");
         }
 
         if (changed) {
@@ -524,6 +531,81 @@ public class ChallengeService {
         return Duration.between(now, end).getSeconds();
     }
 
+    /**
+     * Determine the winner of a completed challenge
+     * Returns null if tie
+     */
+    private User determineWinner(Challenge challenge) {
+        List<ChallengeParticipant> activeParticipants = challenge.getParticipants().stream()
+                .filter(p -> !p.hasForfeited())
+                .toList();
+
+        // If only one active participant (opponent forfeited), they win
+        if (activeParticipants.size() == 1) {
+            return activeParticipants.get(0).getUser();
+        }
+
+        // If no active participants, no winner
+        if (activeParticipants.isEmpty()) {
+            return null;
+        }
+
+        // Calculate overall progress for each participant
+        User winner = null;
+        int maxPercent = -1;
+        boolean isTie = false;
+
+        for (ChallengeParticipant participant : activeParticipants) {
+            int overallPercent = calculateOverallPercent(challenge, participant);
+
+            if (overallPercent > maxPercent) {
+                maxPercent = overallPercent;
+                winner = participant.getUser();
+                isTie = false;
+            } else if (overallPercent == maxPercent) {
+                isTie = true;
+            }
+        }
+
+        return isTie ? null : winner;
+    }
+
+    /**
+     * Calculate overall progress percent for a participant
+     */
+    private int calculateOverallPercent(Challenge challenge, ChallengeParticipant participant) {
+        DailyProgress progress = progressRepository
+                .findLatestByChallengeIdAndUserId(challenge.getId(), participant.getUser().getId())
+                .orElse(null);
+
+        if (progress == null) {
+            return 0;
+        }
+
+        Map<SportType, BigDecimal> goals = participant.getGoals();
+        if (goals.isEmpty()) {
+            return 0;
+        }
+
+        int totalPercent = 0;
+        int sportCount = 0;
+
+        for (Map.Entry<SportType, BigDecimal> entry : goals.entrySet()) {
+            SportType sport = entry.getKey();
+            BigDecimal goalKm = entry.getValue();
+
+            if (goalKm != null && goalKm.compareTo(BigDecimal.ZERO) > 0) {
+                int distance = progress.getDistanceMeters(sport);
+                int goalMeters = goalKm.multiply(BigDecimal.valueOf(1000)).intValue();
+                int percent = Math.min(100, (int) ((distance * 100L) / goalMeters));
+                totalPercent += percent;
+                sportCount++;
+            }
+        }
+
+        return sportCount > 0 ? totalPercent / sportCount : 0;
+    }
+
     private ChallengeDTO mapToDTO(Challenge challenge) {
         List<ParticipantDTO> participants = challenge.getParticipants().stream()
                 .map(p -> new ParticipantDTO(
@@ -552,7 +634,8 @@ public class ChallengeService {
                         challenge.getCreatedBy().getStravaConnection() != null,
                         challenge.getCreatedBy().getPasswordHash() != null
                 ),
-                participants
+                participants,
+                challenge.getWinner() != null ? challenge.getWinner().getId() : null
         );
     }
 }
