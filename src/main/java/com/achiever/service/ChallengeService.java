@@ -148,7 +148,8 @@ public class ChallengeService {
         }
 
         // Check if challenge hasn't ended
-        if (challenge.getEndAt().isBefore(LocalDate.now())) {
+        LocalDate today = getTodayInCreatorTimezone(challenge);
+        if (challenge.getEndAt().isBefore(today)) {
             throw new IllegalStateException("Challenge has ended");
         }
 
@@ -179,7 +180,6 @@ public class ChallengeService {
 
         // Update status when second participant joins
         if (challenge.getParticipants().size() >= 2 && challenge.getStatus() == ChallengeStatus.PENDING) {
-            LocalDate today = LocalDate.now();
             if (challenge.getStartAt().isAfter(today)) {
                 challenge.setStatus(ChallengeStatus.SCHEDULED);
             } else {
@@ -191,8 +191,14 @@ public class ChallengeService {
         // Sync Strava data for joining user if challenge is already active
         if (challenge.getStatus() == ChallengeStatus.ACTIVE && user.getStravaConnection() != null) {
             try {
-                stravaSyncService.syncUserActivities(user.getId());
-                log.info("Synced Strava for joining user {}", user.getUsername());
+                // Sync exactly for challenge period: startAt → today
+                stravaSyncService.syncActivitiesForDateRange(
+                        user.getId(),
+                        challenge.getStartAt(),
+                        today
+                );
+                log.info("Synced Strava for joining user {} from {} to {}",
+                        user.getUsername(), challenge.getStartAt(), today);
             } catch (Exception e) {
                 log.warn("Failed to sync Strava for joining user {}: {}", user.getUsername(), e.getMessage());
             }
@@ -383,7 +389,7 @@ public class ChallengeService {
             // Lazy status update
             updateStatusIfNeeded(challenge);
 
-            // Lazy Strava sync for active/scheduled challenges
+            // Lazy Strava sync for active challenges
             syncStravaForParticipants(challenge, syncedUserIds);
         }
 
@@ -404,21 +410,26 @@ public class ChallengeService {
     }
 
     /**
-     * Update challenge status based on dates (lazy evaluation)
+     * Get current date in creator's timezone
      */
-    private void updateStatusIfNeeded(Challenge challenge) {
-        // Use creator's timezone for date comparison
+    private LocalDate getTodayInCreatorTimezone(Challenge challenge) {
         ZoneId zoneId = ZoneId.of("UTC");
         String creatorTimezone = challenge.getCreatedBy().getTimezone();
         if (creatorTimezone != null && !creatorTimezone.isEmpty()) {
             try {
                 zoneId = ZoneId.of(creatorTimezone);
             } catch (Exception e) {
-                // Invalid timezone, use UTC
+                log.warn("Invalid timezone '{}', using UTC", creatorTimezone);
             }
         }
-        LocalDate today = LocalDate.now(zoneId);
+        return LocalDate.now(zoneId);
+    }
 
+    /**
+     * Update challenge status based on dates (lazy evaluation)
+     */
+    private void updateStatusIfNeeded(Challenge challenge) {
+        LocalDate today = getTodayInCreatorTimezone(challenge);
         ChallengeStatus currentStatus = challenge.getStatus();
         boolean changed = false;
 
@@ -445,11 +456,12 @@ public class ChallengeService {
      * Sync Strava data for all participants in a challenge
      */
     private void syncStravaForParticipants(Challenge challenge, Set<UUID> alreadySynced) {
-        // Only sync for active or scheduled challenges
-        if (challenge.getStatus() != ChallengeStatus.ACTIVE &&
-                challenge.getStatus() != ChallengeStatus.SCHEDULED) {
+        // Only sync for active challenges
+        if (challenge.getStatus() != ChallengeStatus.ACTIVE) {
             return;
         }
+
+        LocalDate today = getTodayInCreatorTimezone(challenge);
 
         for (ChallengeParticipant participant : challenge.getParticipants()) {
             User user = participant.getUser();
@@ -470,9 +482,15 @@ public class ChallengeService {
             }
 
             try {
-                stravaSyncService.syncUserActivities(user.getId());
+                // Sync exactly for challenge period: startAt → today
+                stravaSyncService.syncActivitiesForDateRange(
+                        user.getId(),
+                        challenge.getStartAt(),
+                        today
+                );
                 alreadySynced.add(user.getId());
-                log.debug("Synced Strava for user {} (lazy)", user.getUsername());
+                log.debug("Synced Strava for user {} (lazy) from {} to {}",
+                        user.getUsername(), challenge.getStartAt(), today);
             } catch (Exception e) {
                 log.warn("Failed to sync Strava for user {}: {}", user.getUsername(), e.getMessage());
             }

@@ -8,7 +8,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -30,7 +29,7 @@ public class StravaSyncService {
     private final DailyProgressRepository progressRepository;
 
     /**
-     * Sync activities for a specific user
+     * Sync activities for a specific user (last 30 days)
      */
     @Transactional
     public void syncUserActivities(UUID userId) {
@@ -46,12 +45,49 @@ public class StravaSyncService {
 
         log.info("Fetched {} activities for user {}", activities.size(), userId);
 
+        int newCount = saveActivities(activities, connection.getUser());
+
+        log.info("Saved {} new activities for user {}", newCount, userId);
+
+        // Update progress for active challenges
+        updateProgressForUser(userId);
+    }
+
+    /**
+     * Sync activities for a specific date range (used when opponent joins active challenge)
+     */
+    @Transactional
+    public void syncActivitiesForDateRange(UUID userId, LocalDate fromDate, LocalDate toDate) {
+        StravaConnection connection = connectionRepository.findById(userId)
+                .orElseThrow(() -> new IllegalStateException("No Strava connection for user " + userId));
+
+        OffsetDateTime from = fromDate.atStartOfDay().atOffset(ZoneOffset.UTC);
+        OffsetDateTime to = toDate.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC);
+
+        List<StravaActivityResponse> activities = stravaApiClient.getActivities(
+                connection, from, to, 1, 100);
+
+        log.info("Fetched {} activities for user {} from {} to {}",
+                activities.size(), userId, fromDate, toDate);
+
+        int newCount = saveActivities(activities, connection.getUser());
+
+        log.info("Saved {} new activities for user {}", newCount, userId);
+
+        // Update progress for active challenges
+        updateProgressForUser(userId);
+    }
+
+    /**
+     * Save activities to database
+     */
+    private int saveActivities(List<StravaActivityResponse> activities, User user) {
         int newCount = 0;
         for (StravaActivityResponse activity : activities) {
             if (!activityRepository.existsById(activity.getId())) {
                 StravaActivity entity = StravaActivity.builder()
                         .id(activity.getId())
-                        .user(connection.getUser())
+                        .user(user)
                         .sportType(mapSportType(activity.getSportType()))
                         .name(activity.getName())
                         .startDate(activity.getStartDate())
@@ -63,11 +99,7 @@ public class StravaSyncService {
                 newCount++;
             }
         }
-
-        log.info("Saved {} new activities for user {}", newCount, userId);
-
-        // Update progress for active challenges
-        updateProgressForUser(userId);
+        return newCount;
     }
 
     /**
@@ -120,7 +152,7 @@ public class StravaSyncService {
 
         for (SportType sportType : sportTypes) {
             String stravaSportType = mapSportTypeToStrava(sportType);
-            
+
             // Sum distance for this sport type
             int distance = activityRepository.sumDistanceByUserAndSportTypeAndDateRange(
                     userId, stravaSportType, startDateTime, endDateTime);
@@ -136,7 +168,7 @@ public class StravaSyncService {
                 int percent = Math.min(100, (int) ((distance * 100L) / goalMeters));
                 totalNormalizedPercent += percent;
                 sportCount++;
-                
+
                 log.debug("Sport {}: {}m / {}m = {}%", sportType, distance, goalMeters, percent);
             }
         }
@@ -147,7 +179,7 @@ public class StravaSyncService {
         // Update progress record
         progress.setDistanceMeters(totalDistanceAll); // Legacy total
         progress.setProgressPercent(overallPercent);
-        progress.setUpdatedAt(Instant.now());
+        progress.setUpdatedAt(java.time.Instant.now());
         progressRepository.save(progress);
 
         log.info("Updated multi-sport progress for user {} in challenge {}: overall {}% ({} sports)",
