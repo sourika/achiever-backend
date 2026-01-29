@@ -208,7 +208,7 @@ public class ChallengeService {
     }
 
     /**
-     * Leave (forfeit) a challenge
+     * Leave (or forfeit) a challenge
      */
     @Transactional
     public ChallengeDTO leaveChallenge(UUID challengeId, User user) {
@@ -226,16 +226,24 @@ public class ChallengeService {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("You are not in this challenge"));
 
-        // Check if already forfeited
-        if (participant.hasForfeited()) {
-            throw new IllegalStateException("Already left this challenge");
+        if (challenge.getStatus() == ChallengeStatus.SCHEDULED) {
+            // SCHEDULED: Remove participant completely, revert to PENDING
+            challenge.getParticipants().remove(participant);
+            participantRepository.delete(participant);
+            challenge.setStatus(ChallengeStatus.PENDING);
+            challengeRepository.save(challenge);
+            log.info("User {} left scheduled challenge {}, status reverted to PENDING", user.getId(), challengeId);
+        } else if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
+            // ACTIVE: Mark as forfeited
+            if (participant.hasForfeited()) {
+                throw new IllegalStateException("Already left this challenge");
+            }
+            participant.setForfeitedAt(LocalDateTime.now());
+            participantRepository.save(participant);
+            log.info("User {} forfeited active challenge {}", user.getId(), challengeId);
+        } else {
+            throw new IllegalStateException("Cannot leave challenge with status: " + challenge.getStatus());
         }
-
-        // Mark as forfeited
-        participant.setForfeitedAt(LocalDateTime.now());
-        participantRepository.save(participant);
-
-        log.info("User {} forfeited challenge {}", user.getId(), challengeId);
 
         return mapToDTO(challenge);
     }
