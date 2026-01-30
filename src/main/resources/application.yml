@@ -76,21 +76,27 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     hikari:
-      maximum-pool-size: 5
-      minimum-idle: 2
+      maximum-pool-size: 3
+      minimum-idle: 1
       connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
-      keepalive-time: 300000
+      idle-timeout: 30000
+      max-lifetime: 60000
+      keepalive-time: 30000
+      validation-timeout: 5000
+      connection-test-query: SELECT 1
 
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
 
+server:
+  address: 0.0.0.0
+  port: 8080
+
 app:
   jwt:
-    expiration-ms: 604800000  # 7 дней
+    expiration-ms: 604800000
 
 logging:
   level:

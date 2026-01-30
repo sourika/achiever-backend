@@ -40,6 +40,7 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/challenges/invite/**",
+                                "/api/health",
                                 "/actuator/health"
                         ).permitAll()
                         // All other endpoints require authentication
