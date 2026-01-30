@@ -117,12 +117,30 @@ public class ChallengeService {
 
     @Transactional
     public void deleteChallenge(UUID challengeId, User user) {
-        Challenge challenge = challengeRepository.findById(challengeId)
+        Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
                 .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
 
         // Only creator can delete
         if (!challenge.getCreatedBy().getId().equals(user.getId())) {
             throw new IllegalArgumentException("Only the creator can delete this challenge");
+        }
+
+        // Cannot delete ACTIVE challenge
+        if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
+            throw new IllegalArgumentException("Cannot delete active challenge");
+        }
+
+        // Cannot delete if creator has forfeited
+        boolean creatorForfeited = challenge.getParticipants().stream()
+                .filter(p -> p.getUser().getId().equals(user.getId()))
+                .anyMatch(ChallengeParticipant::hasForfeited);
+        if (creatorForfeited) {
+            throw new IllegalArgumentException("Cannot delete: you have forfeited this challenge");
+        }
+
+        // Cannot delete SCHEDULED if opponent joined (MVP: be fair to opponent)
+        if (challenge.getStatus() == ChallengeStatus.SCHEDULED && challenge.getParticipants().size() > 1) {
+            throw new IllegalArgumentException("Cannot delete: opponent already joined. Wait for them to leave or for the challenge to complete.");
         }
 
         challengeRepository.delete(challenge);
@@ -215,10 +233,7 @@ public class ChallengeService {
         Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
                 .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
 
-        // Creator cannot leave, only delete
-        if (challenge.getCreatedBy().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("Creator cannot leave. Use delete instead.");
-        }
+        boolean isCreator = challenge.getCreatedBy().getId().equals(user.getId());
 
         // Find participant
         ChallengeParticipant participant = challenge.getParticipants().stream()
@@ -227,14 +242,18 @@ public class ChallengeService {
                 .orElseThrow(() -> new IllegalArgumentException("You are not in this challenge"));
 
         if (challenge.getStatus() == ChallengeStatus.SCHEDULED) {
-            // SCHEDULED: Remove participant completely, revert to PENDING
+            // SCHEDULED: Creator cannot leave, only delete
+            if (isCreator) {
+                throw new IllegalArgumentException("Creator cannot leave scheduled challenge. Use delete instead.");
+            }
+            // Remove participant completely, revert to PENDING
             challenge.getParticipants().remove(participant);
             participantRepository.delete(participant);
             challenge.setStatus(ChallengeStatus.PENDING);
             challengeRepository.save(challenge);
             log.info("User {} left scheduled challenge {}, status reverted to PENDING", user.getId(), challengeId);
         } else if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
-            // ACTIVE: Mark as forfeited
+            // ACTIVE: Both creator and opponent can forfeit
             if (participant.hasForfeited()) {
                 throw new IllegalStateException("Already left this challenge");
             }
@@ -249,16 +268,26 @@ public class ChallengeService {
     }
 
     /**
-     * Finish challenge early (creator claims win after opponent left)
+     * Finish challenge early (claim win after opponent forfeited)
      */
     @Transactional
     public ChallengeDTO finishChallenge(UUID challengeId, User user) {
         Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
                 .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
 
-        // Only creator can finish
-        if (!challenge.getCreatedBy().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("Only creator can finish the challenge");
+        // Check if user is participant
+        boolean isParticipant = challenge.getParticipants().stream()
+                .anyMatch(p -> p.getUser().getId().equals(user.getId()));
+        if (!isParticipant) {
+            throw new IllegalArgumentException("You are not in this challenge");
+        }
+
+        // Check if current user has forfeited
+        boolean currentUserForfeited = challenge.getParticipants().stream()
+                .filter(p -> p.getUser().getId().equals(user.getId()))
+                .anyMatch(ChallengeParticipant::hasForfeited);
+        if (currentUserForfeited) {
+            throw new IllegalStateException("You have forfeited this challenge");
         }
 
         // Check if opponent has forfeited
@@ -270,11 +299,12 @@ public class ChallengeService {
             throw new IllegalStateException("Cannot finish: opponent has not left");
         }
 
-        // Mark challenge as completed
+        // Mark challenge as completed with user as winner
         challenge.setStatus(ChallengeStatus.COMPLETED);
+        challenge.setWinner(user);
         challengeRepository.save(challenge);
 
-        log.info("Challenge {} finished early by creator {}", challengeId, user.getId());
+        log.info("Challenge {} finished early by user {}, winner set", challengeId, user.getId());
 
         return mapToDTO(challenge);
     }
@@ -440,6 +470,13 @@ public class ChallengeService {
         LocalDate today = getTodayInCreatorTimezone(challenge);
         ChallengeStatus currentStatus = challenge.getStatus();
         boolean changed = false;
+
+        // PENDING -> EXPIRED (end date passed without opponent joining)
+        if (currentStatus == ChallengeStatus.PENDING && challenge.getEndAt().isBefore(today)) {
+            challenge.setStatus(ChallengeStatus.EXPIRED);
+            changed = true;
+            log.info("Challenge {} expired (no opponent joined)", challenge.getId());
+        }
 
         // SCHEDULED -> ACTIVE (start date reached)
         if (currentStatus == ChallengeStatus.SCHEDULED && !challenge.getStartAt().isAfter(today)) {
