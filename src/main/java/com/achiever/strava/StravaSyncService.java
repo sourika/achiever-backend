@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
@@ -79,6 +80,42 @@ public class StravaSyncService {
     }
 
     /**
+     * Sync Strava activities and update progress for a specific user in a specific challenge.
+     * Used by cron job and manual sync.
+     */
+    @Transactional
+    public void syncAndUpdateProgress(User user, Challenge challenge) {
+        StravaConnection connection = connectionRepository.findById(user.getId())
+                .orElse(null);
+
+        if (connection == null) {
+            log.debug("User {} has no Strava connection, skipping sync", user.getUsername());
+            return;
+        }
+
+        // Sync activities for challenge date range
+        OffsetDateTime from = getEffectiveStartTime(challenge);
+        OffsetDateTime to = challenge.getEndAt().plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC);
+
+        try {
+            List<StravaActivityResponse> activities = stravaApiClient.getActivities(
+                    connection, from, to, 1, 100);
+
+            log.info("Fetched {} activities for user {} from {} to {}",
+                    activities.size(), user.getUsername(), from, challenge.getEndAt());
+
+            saveActivities(activities, user);
+
+            // Update progress for this specific challenge
+            updateChallengeProgress(challenge, user.getId());
+
+        } catch (Exception e) {
+            log.warn("Failed to sync Strava for user {}: {}", user.getUsername(), e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
      * Save activities to database
      */
     private int saveActivities(List<StravaActivityResponse> activities, User user) {
@@ -123,9 +160,7 @@ public class StravaSyncService {
                 .orElseThrow();
 
         // Get challenge date range as OffsetDateTime
-        OffsetDateTime startDateTime = challenge.getStartAt()
-                .atStartOfDay()
-                .atOffset(ZoneOffset.UTC);
+        OffsetDateTime startDateTime = getEffectiveStartTime(challenge);
         OffsetDateTime endDateTime = challenge.getEndAt()
                 .plusDays(1)
                 .atStartOfDay()
@@ -184,6 +219,28 @@ public class StravaSyncService {
 
         log.info("Updated multi-sport progress for user {} in challenge {}: overall {}% ({} sports)",
                 userId, challenge.getId(), overallPercent, sportCount);
+    }
+
+    /**
+     * Calculate the effective start time for activity filtering.
+     * - Converts start_at to midnight in CREATOR'S timezone, then to UTC
+     * - Uses max(start_at in creator TZ, created_at) to prevent backdating
+     */
+    private OffsetDateTime getEffectiveStartTime(Challenge challenge) {
+        // Get creator's timezone (e.g., "America/Los_Angeles")
+        String timezone = challenge.getCreatedBy().getTimezone();
+        ZoneId creatorZone = timezone != null ? ZoneId.of(timezone) : ZoneOffset.UTC;
+
+        // start_at at midnight in creator's timezone, converted to UTC
+        OffsetDateTime startAtInCreatorTZ = challenge.getStartAt()
+                .atStartOfDay(creatorZone)
+                .toOffsetDateTime()
+                .withOffsetSameInstant(ZoneOffset.UTC);
+
+        OffsetDateTime createdAt = challenge.getCreatedAt().atOffset(ZoneOffset.UTC);
+
+        // Use the later of the two (prevents backdating)
+        return startAtInCreatorTZ.isAfter(createdAt) ? startAtInCreatorTZ : createdAt;
     }
 
     private String mapSportType(String stravaSportType) {

@@ -2,6 +2,7 @@ package com.achiever.service;
 
 import com.achiever.entity.*;
 import com.achiever.repository.*;
+import com.achiever.strava.StravaSyncService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,75 +21,144 @@ public class ChallengeSchedulerService {
     private final ChallengeParticipantRepository participantRepository;
     private final DailyProgressRepository progressRepository;
     private final ChallengeWeekResultRepository resultRepository;
+    private final ChallengeService challengeService;
+    private final StravaSyncService stravaSyncService;
+
+    // ============================================================
+    // DAILY MIDNIGHT JOB
+    // ============================================================
 
     /**
-     * Activate challenges that should start today
-     * Runs every hour
+     * Runs every day at midnight UTC.
+     * Handles all daily maintenance tasks.
      */
-    @Scheduled(cron = "0 0 * * * *") // Every hour
-    @Transactional
-    public void activateChallenges() {
+    @Scheduled(cron = "0 0 0 * * *")
+    public void midnightSync() {
+        log.info("=== Starting midnight sync job ===");
         LocalDate today = LocalDate.now();
-        
-        List<Challenge> pendingChallenges = challengeRepository
-                .findByStatusAndStartAtBefore(ChallengeStatus.PENDING, today.plusDays(1));
 
-        for (Challenge challenge : pendingChallenges) {
-            // Only activate if has 2 participants
-            if (challenge.getParticipants().size() >= 2) {
+        // 1. Status transitions (idempotent - safe to run even if lazy already did it)
+        processStatusTransitions(today);
+
+        // 2. Sync Strava for all ACTIVE challenges
+        syncAllActiveChallenges();
+
+        // 3. Complete challenges and determine winners
+        completeExpiredChallenges(today);
+
+        log.info("=== Midnight sync job finished ===");
+    }
+
+    @Transactional
+    protected void processStatusTransitions(LocalDate today) {
+        // PENDING → EXPIRED (no opponent joined before end date)
+        List<Challenge> pending = challengeRepository.findByStatus(ChallengeStatus.PENDING);
+        for (Challenge challenge : pending) {
+            if (challenge.getEndAt().isBefore(today)) {
+                challenge.setStatus(ChallengeStatus.EXPIRED);
+                challengeRepository.save(challenge);
+                log.info("[CRON] Challenge {} '{}' expired (no opponent)",
+                        challenge.getId(), challenge.getName());
+            }
+        }
+
+        // SCHEDULED → ACTIVE (start date reached)
+        List<Challenge> scheduled = challengeRepository.findByStatus(ChallengeStatus.SCHEDULED);
+        for (Challenge challenge : scheduled) {
+            if (!challenge.getStartAt().isAfter(today)) {
                 challenge.setStatus(ChallengeStatus.ACTIVE);
                 challengeRepository.save(challenge);
-                log.info("Activated challenge: {}", challenge.getId());
+                log.info("[CRON] Challenge {} '{}' activated",
+                        challenge.getId(), challenge.getName());
+                // TODO: Send push notification "Challenge started! 🏃"
             }
         }
     }
 
-    /**
-     * Complete challenges that have ended
-     * Runs every hour
-     */
-    @Scheduled(cron = "0 30 * * * *") // Every hour at :30
-    @Transactional
-    public void completeChallenges() {
-        LocalDate today = LocalDate.now();
-        
-        List<Challenge> activeChallenges = challengeRepository
-                .findByStatusAndEndAtBefore(ChallengeStatus.ACTIVE, today);
+    protected void syncAllActiveChallenges() {
+        List<Challenge> active = challengeRepository.findByStatus(ChallengeStatus.ACTIVE);
+        log.info("[CRON] Syncing {} active challenges", active.size());
 
-        for (Challenge challenge : activeChallenges) {
-            challenge.setStatus(ChallengeStatus.COMPLETED);
-            challengeRepository.save(challenge);
-            
-            // Calculate final results
-            calculateFinalResults(challenge);
-            
-            log.info("Completed challenge: {}", challenge.getId());
+        for (Challenge challenge : active) {
+            syncChallengeParticipants(challenge);
         }
     }
 
+    @Transactional
+    protected void completeExpiredChallenges(LocalDate today) {
+        List<Challenge> active = challengeRepository.findByStatus(ChallengeStatus.ACTIVE);
+
+        for (Challenge challenge : active) {
+            if (challenge.getEndAt().isBefore(today)) {
+                // Final sync to get latest data
+                syncChallengeParticipants(challenge);
+
+                // Determine winner
+                User winner = challengeService.determineWinner(challenge);
+                challenge.setWinner(winner);
+                challenge.setStatus(ChallengeStatus.COMPLETED);
+                challengeRepository.save(challenge);
+
+                log.info("[CRON] Challenge {} '{}' completed. Winner: {}",
+                        challenge.getId(),
+                        challenge.getName(),
+                        winner != null ? winner.getUsername() : "TIE");
+
+                // TODO: Send push notification "🏆 You won!" / "Challenge ended"
+            }
+        }
+    }
+
+    private void syncChallengeParticipants(Challenge challenge) {
+        for (ChallengeParticipant participant : challenge.getParticipants()) {
+            if (participant.hasForfeited()) {
+                continue;
+            }
+
+            User user = participant.getUser();
+            if (user.getStravaConnection() == null) {
+                continue;
+            }
+
+            try {
+                stravaSyncService.syncAndUpdateProgress(user, challenge);
+                log.debug("[CRON] Synced user {} in challenge {}",
+                        user.getUsername(), challenge.getId());
+            } catch (Exception e) {
+                log.warn("[CRON] Sync failed for user {} in challenge {}: {}",
+                        user.getUsername(), challenge.getId(), e.getMessage());
+            }
+        }
+    }
+
+    // ============================================================
+    // WEEKLY RESULTS (for multi-week challenges)
+    // ============================================================
+
     /**
-     * Calculate weekly results
-     * Runs every Monday at 00:05
+     * Calculate weekly results for long-running challenges.
+     * Runs every Monday at 00:05 UTC.
      */
     @Scheduled(cron = "0 5 0 * * MON")
     @Transactional
     public void calculateWeeklyResults() {
-        log.info("Starting weekly results calculation");
-        
+        log.info("[CRON] Starting weekly results calculation");
+
         LocalDate weekEnd = LocalDate.now().minusDays(1); // Yesterday (Sunday)
         LocalDate weekStart = weekEnd.minusDays(6); // Last Monday
 
-        List<Challenge> activeChallenges = challengeRepository
-                .findByStatus(ChallengeStatus.ACTIVE);
+        List<Challenge> activeChallenges = challengeRepository.findByStatus(ChallengeStatus.ACTIVE);
 
+        int calculated = 0;
         for (Challenge challenge : activeChallenges) {
-            // Skip if results already calculated for this week
             if (resultRepository.existsByChallengeIdAndWeekStart(challenge.getId(), weekStart)) {
-                continue;
+                continue; // Already calculated
             }
-
             calculateWeekResult(challenge, weekStart);
+            calculated++;
         }
+
+        log.info("[CRON] Weekly results calculated for {} challenges", calculated);
     }
 
     private void calculateWeekResult(Challenge challenge, LocalDate weekStart) {
@@ -103,18 +173,15 @@ public class ChallengeSchedulerService {
         ChallengeParticipant participantA = participants.get(0);
         ChallengeParticipant participantB = participants.get(1);
 
-        // Get latest progress for each participant
         int percentA = getLatestProgressPercent(challenge.getId(), participantA.getUser().getId());
         int percentB = getLatestProgressPercent(challenge.getId(), participantB.getUser().getId());
 
-        // Determine winner
         User winner = null;
         if (percentA > percentB) {
             winner = participantA.getUser();
         } else if (percentB > percentA) {
             winner = participantB.getUser();
         }
-        // null winner = tie
 
         ChallengeWeekResult result = ChallengeWeekResult.builder()
                 .challenge(challenge)
@@ -128,18 +195,9 @@ public class ChallengeSchedulerService {
 
         resultRepository.save(result);
 
-        log.info("Week result for challenge {}: A={}%, B={}%, winner={}",
+        log.info("[CRON] Week result for challenge {}: A={}%, B={}%, winner={}",
                 challenge.getId(), percentA, percentB,
-                winner != null ? winner.getId() : "TIE");
-    }
-
-    private void calculateFinalResults(Challenge challenge) {
-        // For MVP, just calculate the final week results
-        LocalDate weekStart = challenge.getStartAt();
-        
-        if (!resultRepository.existsByChallengeIdAndWeekStart(challenge.getId(), weekStart)) {
-            calculateWeekResult(challenge, weekStart);
-        }
+                winner != null ? winner.getUsername() : "TIE");
     }
 
     private int getLatestProgressPercent(java.util.UUID challengeId, java.util.UUID userId) {
@@ -149,4 +207,26 @@ public class ChallengeSchedulerService {
                 .map(DailyProgress::getProgressPercent)
                 .orElse(0);
     }
+
+    // ============================================================
+    // FUTURE: Webhook handler (will be called from controller)
+    // ============================================================
+
+    /**
+     * Handle incoming Strava webhook event.
+     * Called when Strava sends activity create/update/delete event.
+     *
+     * @param stravaUserId Strava athlete ID
+     * @param activityId Strava activity ID
+     * @param aspectType "create", "update", or "delete"
+     */
+    // public void handleStravaWebhook(Long stravaUserId, Long activityId, String aspectType) {
+    //     log.info("[WEBHOOK] Received {} for activity {} from athlete {}",
+    //         aspectType, activityId, stravaUserId);
+    //
+    //     // 1. Find user by stravaUserId
+    //     // 2. Fetch activity details from Strava API
+    //     // 3. Update progress for all ACTIVE challenges of this user
+    //     // 4. No status changes here - that's lazy/cron responsibility
+    // }
 }

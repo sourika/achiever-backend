@@ -320,9 +320,9 @@ public class ChallengeService {
         // Lazy status update
         updateStatusIfNeeded(challenge);
 
-        // Lazy Strava sync
-        Set<UUID> syncedUserIds = new HashSet<>();
-        syncStravaForParticipants(challenge, syncedUserIds);
+        /// Disabled for MVP - use manual sync button instead
+        // Set<UUID> syncedUserIds = new HashSet<>();
+        // syncStravaForParticipants(challenge, syncedUserIds);
 
         return mapToDTO(challenge);
     }
@@ -428,7 +428,8 @@ public class ChallengeService {
             updateStatusIfNeeded(challenge);
 
             // Lazy Strava sync for active challenges
-            syncStravaForParticipants(challenge, syncedUserIds);
+            // Disabled for MVP - use manual sync button instead
+            // syncStravaForParticipants(challenge, syncedUserIds);
         }
 
         return challenges.stream()
@@ -580,7 +581,7 @@ public class ChallengeService {
      * Determine the winner of a completed challenge
      * Returns null if tie
      */
-    private User determineWinner(Challenge challenge) {
+    User determineWinner(Challenge challenge) {
         List<ChallengeParticipant> activeParticipants = challenge.getParticipants().stream()
                 .filter(p -> !p.hasForfeited())
                 .toList();
