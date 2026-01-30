@@ -3,7 +3,6 @@ package com.achiever.controller;
 import com.achiever.dto.*;
 import com.achiever.entity.User;
 import com.achiever.service.ChallengeService;
-import com.achiever.strava.StravaSyncService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,7 +21,6 @@ import java.util.UUID;
 public class ChallengeController {
 
     private final ChallengeService challengeService;
-    private final StravaSyncService stravaSyncService;
 
     /**
      * Create a new challenge
@@ -119,14 +117,9 @@ public class ChallengeController {
      * Manually trigger Strava sync for current user
      */
     @PostMapping("/{id}/sync")
-    public ResponseEntity<ChallengeProgressDTO> syncAndGetProgress(
-            @AuthenticationPrincipal User user,
-            @PathVariable UUID id) {
+    public ResponseEntity<ChallengeProgressDTO> syncAndGetProgress(@PathVariable UUID id) {
 
-        // Sync user's activities
-        stravaSyncService.syncUserActivities(user.getId());
-        
-        // Return updated progress
+        // Sync all participants (getChallengeProgress does lazy sync)
         return ResponseEntity.ok(challengeService.getChallengeProgress(id));
     }
 }

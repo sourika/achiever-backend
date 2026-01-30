@@ -135,14 +135,6 @@ public class ChallengeService {
             throw new IllegalArgumentException("Cannot delete: opponent already joined. Ask them to leave first.");
         }
 
-        // Cannot delete if creator has forfeited
-        boolean creatorForfeited = challenge.getParticipants().stream()
-                .filter(p -> p.getUser().getId().equals(user.getId()))
-                .anyMatch(ChallengeParticipant::hasForfeited);
-        if (creatorForfeited) {
-            throw new IllegalArgumentException("Cannot delete: you have forfeited this challenge");
-        }
-
         challengeRepository.delete(challenge);
         log.info("Challenge {} deleted by user {}", challengeId, user.getId());
     }
