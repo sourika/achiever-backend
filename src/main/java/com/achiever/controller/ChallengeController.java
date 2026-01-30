@@ -71,16 +71,6 @@ public class ChallengeController {
     }
 
     /**
-     * Finish challenge early - for creator when opponent left
-     */
-    @PostMapping("/{id}/finish")
-    public ResponseEntity<ChallengeDTO> finishChallenge(
-            @PathVariable UUID id,
-            @AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(challengeService.finishChallenge(id, user));
-    }
-
-    /**
      * Get challenge preview by invite code (public)
      */
     @GetMapping("/invite/{code}")

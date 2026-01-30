@@ -227,6 +227,7 @@ public class ChallengeService {
 
     /**
      * Leave (or forfeit) a challenge
+     * MVP: Forfeit immediately ends challenge, opponent wins
      */
     @Transactional
     public ChallengeDTO leaveChallenge(UUID challengeId, User user) {
@@ -252,14 +253,33 @@ public class ChallengeService {
             challenge.setStatus(ChallengeStatus.PENDING);
             challengeRepository.save(challenge);
             log.info("User {} left scheduled challenge {}, status reverted to PENDING", user.getId(), challengeId);
+
         } else if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
-            // ACTIVE: Both creator and opponent can forfeit
+            // ACTIVE: Forfeit - opponent wins immediately
             if (participant.hasForfeited()) {
-                throw new IllegalStateException("Already left this challenge");
+                throw new IllegalStateException("Already forfeited this challenge");
             }
+
+            // Mark as forfeited
             participant.setForfeitedAt(LocalDateTime.now());
             participantRepository.save(participant);
-            log.info("User {} forfeited active challenge {}", user.getId(), challengeId);
+
+            // Find opponent (the other participant)
+            User opponent = challenge.getParticipants().stream()
+                    .filter(p -> !p.getUser().getId().equals(user.getId()))
+                    .map(ChallengeParticipant::getUser)
+                    .findFirst()
+                    .orElse(null);
+
+            // Complete challenge immediately - opponent wins
+            challenge.setStatus(ChallengeStatus.COMPLETED);
+            challenge.setWinner(opponent);
+            challengeRepository.save(challenge);
+
+            log.info("User {} forfeited challenge {}. Winner: {}",
+                    user.getId(), challengeId,
+                    opponent != null ? opponent.getUsername() : "none");
+
         } else {
             throw new IllegalStateException("Cannot leave challenge with status: " + challenge.getStatus());
         }
@@ -268,49 +288,7 @@ public class ChallengeService {
     }
 
     /**
-     * Finish challenge early (claim win after opponent forfeited)
-     */
-    @Transactional
-    public ChallengeDTO finishChallenge(UUID challengeId, User user) {
-        Challenge challenge = challengeRepository.findByIdWithParticipants(challengeId)
-                .orElseThrow(() -> new IllegalArgumentException("Challenge not found"));
-
-        // Check if user is participant
-        boolean isParticipant = challenge.getParticipants().stream()
-                .anyMatch(p -> p.getUser().getId().equals(user.getId()));
-        if (!isParticipant) {
-            throw new IllegalArgumentException("You are not in this challenge");
-        }
-
-        // Check if current user has forfeited
-        boolean currentUserForfeited = challenge.getParticipants().stream()
-                .filter(p -> p.getUser().getId().equals(user.getId()))
-                .anyMatch(ChallengeParticipant::hasForfeited);
-        if (currentUserForfeited) {
-            throw new IllegalStateException("You have forfeited this challenge");
-        }
-
-        // Check if opponent has forfeited
-        boolean opponentForfeited = challenge.getParticipants().stream()
-                .filter(p -> !p.getUser().getId().equals(user.getId()))
-                .anyMatch(ChallengeParticipant::hasForfeited);
-
-        if (!opponentForfeited) {
-            throw new IllegalStateException("Cannot finish: opponent has not left");
-        }
-
-        // Mark challenge as completed with user as winner
-        challenge.setStatus(ChallengeStatus.COMPLETED);
-        challenge.setWinner(user);
-        challengeRepository.save(challenge);
-
-        log.info("Challenge {} finished early by user {}, winner set", challengeId, user.getId());
-
-        return mapToDTO(challenge);
-    }
-
-    /**
-     * Get challenge by ID with lazy status update and Strava sync
+     * Get challenge by ID with lazy status update
      */
     @Transactional
     public ChallengeDTO getChallenge(UUID challengeId) {
@@ -319,10 +297,6 @@ public class ChallengeService {
 
         // Lazy status update
         updateStatusIfNeeded(challenge);
-
-        /// Disabled for MVP - use manual sync button instead
-        // Set<UUID> syncedUserIds = new HashSet<>();
-        // syncStravaForParticipants(challenge, syncedUserIds);
 
         return mapToDTO(challenge);
     }
@@ -415,21 +389,15 @@ public class ChallengeService {
     }
 
     /**
-     * Get user's challenges with lazy status update and Strava sync
+     * Get user's challenges with lazy status update
      */
     @Transactional
     public List<ChallengeDTO> getUserChallenges(UUID userId) {
         List<Challenge> challenges = challengeRepository.findByParticipantUserId(userId);
 
-        Set<UUID> syncedUserIds = new HashSet<>();
-
         for (Challenge challenge : challenges) {
             // Lazy status update
             updateStatusIfNeeded(challenge);
-
-            // Lazy Strava sync for active challenges
-            // Disabled for MVP - use manual sync button instead
-            // syncStravaForParticipants(challenge, syncedUserIds);
         }
 
         return challenges.stream()
