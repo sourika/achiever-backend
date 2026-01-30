@@ -130,17 +130,17 @@ public class ChallengeService {
             throw new IllegalArgumentException("Cannot delete active challenge");
         }
 
+        // Cannot delete SCHEDULED if opponent joined (MVP: be fair to opponent)
+        if (challenge.getStatus() == ChallengeStatus.SCHEDULED && challenge.getParticipants().size() > 1) {
+            throw new IllegalArgumentException("Cannot delete: opponent already joined. Ask them to leave first.");
+        }
+
         // Cannot delete if creator has forfeited
         boolean creatorForfeited = challenge.getParticipants().stream()
                 .filter(p -> p.getUser().getId().equals(user.getId()))
                 .anyMatch(ChallengeParticipant::hasForfeited);
         if (creatorForfeited) {
             throw new IllegalArgumentException("Cannot delete: you have forfeited this challenge");
-        }
-
-        // Cannot delete SCHEDULED if opponent joined (MVP: be fair to opponent)
-        if (challenge.getStatus() == ChallengeStatus.SCHEDULED && challenge.getParticipants().size() > 1) {
-            throw new IllegalArgumentException("Cannot delete: opponent already joined. Wait for them to leave or for the challenge to complete.");
         }
 
         challengeRepository.delete(challenge);
