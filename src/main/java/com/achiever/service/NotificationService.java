@@ -79,7 +79,7 @@ public class NotificationService {
         String challengeName = challenge.getName() != null ? challenge.getName() : "Challenge";
         for (ChallengeParticipant p : challenge.getParticipants()) {
             notify(p.getUser(), NotificationType.CHALLENGE_STARTED, challenge,
-                    "\"" + challengeName + "\" has started! 🏃");
+                    "\"" + challengeName + "\" has started!");
         }
     }
 

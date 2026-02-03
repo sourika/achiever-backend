@@ -243,15 +243,19 @@ public class ChallengeService {
                 .orElseThrow(() -> new IllegalArgumentException("You are not in this challenge"));
 
         if (challenge.getStatus() == ChallengeStatus.SCHEDULED) {
-            // SCHEDULED: Creator cannot leave, only delete
             if (isCreator) {
                 throw new IllegalArgumentException("Creator cannot leave scheduled challenge. Use delete instead.");
             }
-            // Remove participant completely, revert to PENDING
             challenge.getParticipants().remove(participant);
             participantRepository.delete(participant);
             challenge.setStatus(ChallengeStatus.PENDING);
             challengeRepository.save(challenge);
+
+            // Notify creator that opponent left
+            String challengeName = challenge.getName() != null ? challenge.getName() : "Challenge";
+            notificationService.notify(challenge.getCreatedBy(), NotificationType.CHALLENGE_JOINED, challenge,
+                    user.getUsername() + " left \"" + challengeName + "\". Waiting for a new opponent.");
+
             log.info("User {} left scheduled challenge {}, status reverted to PENDING", user.getId(), challengeId);
 
         } else if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
@@ -266,8 +270,8 @@ public class ChallengeService {
 
             // Find opponent (the other participant)
             User opponent = challenge.getParticipants().stream()
-                    .filter(p -> !p.getUser().getId().equals(user.getId()))
                     .map(ChallengeParticipant::getUser)
+                    .filter(u -> !u.getId().equals(user.getId()))
                     .findFirst()
                     .orElse(null);
 
@@ -563,7 +567,7 @@ public class ChallengeService {
 
         // If only one active participant (opponent forfeited), they win
         if (activeParticipants.size() == 1) {
-            return activeParticipants.get(0).getUser();
+            return activeParticipants.getFirst().getUser();
         }
 
         // If no active participants, no winner
