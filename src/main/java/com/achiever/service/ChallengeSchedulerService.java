@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -30,6 +31,7 @@ public class ChallengeSchedulerService {
     // ============================================================
 
     @Scheduled(cron = "0 0 0 * * *")
+    @Transactional
     public void midnightSync() {
         log.info("=== Starting midnight sync job ===");
         LocalDate today = LocalDate.now();
@@ -41,7 +43,6 @@ public class ChallengeSchedulerService {
         log.info("=== Midnight sync job finished ===");
     }
 
-    @Transactional
     protected void processStatusTransitions(LocalDate today) {
         // PENDING → EXPIRED
         List<Challenge> pending = challengeRepository.findByStatus(ChallengeStatus.PENDING);
@@ -77,7 +78,6 @@ public class ChallengeSchedulerService {
         }
     }
 
-    @Transactional
     protected void completeExpiredChallenges(LocalDate today) {
         List<Challenge> active = challengeRepository.findByStatus(ChallengeStatus.ACTIVE);
 
@@ -190,7 +190,7 @@ public class ChallengeSchedulerService {
     private int getLatestProgressPercent(java.util.UUID challengeId, java.util.UUID userId) {
         return progressRepository
                 .findByChallengeIdAndUserId(challengeId, userId).stream()
-                .max((a, b) -> a.getDate().compareTo(b.getDate()))
+                .max(Comparator.comparing(DailyProgress::getDate))
                 .map(DailyProgress::getProgressPercent)
                 .orElse(0);
     }

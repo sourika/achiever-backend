@@ -13,9 +13,6 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
 
     List<Notification> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
-    @Query("SELECT n FROM Notification n WHERE n.user.id = :userId ORDER BY n.createdAt DESC")
-    List<Notification> findRecentByUserId(@Param("userId") UUID userId);
-
     long countByUserIdAndReadFalse(UUID userId);
 
     @Modifying
