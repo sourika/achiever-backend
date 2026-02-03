@@ -23,27 +23,19 @@ public class ChallengeSchedulerService {
     private final ChallengeWeekResultRepository resultRepository;
     private final ChallengeService challengeService;
     private final StravaSyncService stravaSyncService;
+    private final NotificationService notificationService;
 
     // ============================================================
     // DAILY MIDNIGHT JOB
     // ============================================================
 
-    /**
-     * Runs every day at midnight UTC.
-     * Handles all daily maintenance tasks.
-     */
     @Scheduled(cron = "0 0 0 * * *")
     public void midnightSync() {
         log.info("=== Starting midnight sync job ===");
         LocalDate today = LocalDate.now();
 
-        // 1. Status transitions (idempotent - safe to run even if lazy already did it)
         processStatusTransitions(today);
-
-        // 2. Sync Strava for all ACTIVE challenges
         syncAllActiveChallenges();
-
-        // 3. Complete challenges and determine winners
         completeExpiredChallenges(today);
 
         log.info("=== Midnight sync job finished ===");
@@ -51,7 +43,7 @@ public class ChallengeSchedulerService {
 
     @Transactional
     protected void processStatusTransitions(LocalDate today) {
-        // PENDING → EXPIRED (no opponent joined before end date)
+        // PENDING → EXPIRED
         List<Challenge> pending = challengeRepository.findByStatus(ChallengeStatus.PENDING);
         for (Challenge challenge : pending) {
             if (challenge.getEndAt().isBefore(today)) {
@@ -59,10 +51,11 @@ public class ChallengeSchedulerService {
                 challengeRepository.save(challenge);
                 log.info("[CRON] Challenge {} '{}' expired (no opponent)",
                         challenge.getId(), challenge.getName());
+                notificationService.notifyChallengeExpired(challenge);
             }
         }
 
-        // SCHEDULED → ACTIVE (start date reached)
+        // SCHEDULED → ACTIVE
         List<Challenge> scheduled = challengeRepository.findByStatus(ChallengeStatus.SCHEDULED);
         for (Challenge challenge : scheduled) {
             if (!challenge.getStartAt().isAfter(today)) {
@@ -70,7 +63,7 @@ public class ChallengeSchedulerService {
                 challengeRepository.save(challenge);
                 log.info("[CRON] Challenge {} '{}' activated",
                         challenge.getId(), challenge.getName());
-                // TODO: Send push notification "Challenge started! 🏃"
+                notificationService.notifyChallengeStarted(challenge);
             }
         }
     }
@@ -90,10 +83,8 @@ public class ChallengeSchedulerService {
 
         for (Challenge challenge : active) {
             if (challenge.getEndAt().isBefore(today)) {
-                // Final sync to get latest data
                 syncChallengeParticipants(challenge);
 
-                // Determine winner
                 User winner = challengeService.determineWinner(challenge);
                 challenge.setWinner(winner);
                 challenge.setStatus(ChallengeStatus.COMPLETED);
@@ -104,7 +95,7 @@ public class ChallengeSchedulerService {
                         challenge.getName(),
                         winner != null ? winner.getUsername() : "TIE");
 
-                // TODO: Send push notification "🏆 You won!" / "Challenge ended"
+                notificationService.notifyChallengeCompleted(challenge, winner);
             }
         }
     }
@@ -132,27 +123,23 @@ public class ChallengeSchedulerService {
     }
 
     // ============================================================
-    // WEEKLY RESULTS (for multi-week challenges)
+    // WEEKLY RESULTS
     // ============================================================
 
-    /**
-     * Calculate weekly results for long-running challenges.
-     * Runs every Monday at 00:05 UTC.
-     */
     @Scheduled(cron = "0 5 0 * * MON")
     @Transactional
     public void calculateWeeklyResults() {
         log.info("[CRON] Starting weekly results calculation");
 
-        LocalDate weekEnd = LocalDate.now().minusDays(1); // Yesterday (Sunday)
-        LocalDate weekStart = weekEnd.minusDays(6); // Last Monday
+        LocalDate weekEnd = LocalDate.now().minusDays(1);
+        LocalDate weekStart = weekEnd.minusDays(6);
 
         List<Challenge> activeChallenges = challengeRepository.findByStatus(ChallengeStatus.ACTIVE);
 
         int calculated = 0;
         for (Challenge challenge : activeChallenges) {
             if (resultRepository.existsByChallengeIdAndWeekStart(challenge.getId(), weekStart)) {
-                continue; // Already calculated
+                continue;
             }
             calculateWeekResult(challenge, weekStart);
             calculated++;
@@ -207,26 +194,4 @@ public class ChallengeSchedulerService {
                 .map(DailyProgress::getProgressPercent)
                 .orElse(0);
     }
-
-    // ============================================================
-    // FUTURE: Webhook handler (will be called from controller)
-    // ============================================================
-
-    /**
-     * Handle incoming Strava webhook event.
-     * Called when Strava sends activity create/update/delete event.
-     *
-     * @param stravaUserId Strava athlete ID
-     * @param activityId Strava activity ID
-     * @param aspectType "create", "update", or "delete"
-     */
-    // public void handleStravaWebhook(Long stravaUserId, Long activityId, String aspectType) {
-    //     log.info("[WEBHOOK] Received {} for activity {} from athlete {}",
-    //         aspectType, activityId, stravaUserId);
-    //
-    //     // 1. Find user by stravaUserId
-    //     // 2. Fetch activity details from Strava API
-    //     // 3. Update progress for all ACTIVE challenges of this user
-    //     // 4. No status changes here - that's lazy/cron responsibility
-    // }
 }

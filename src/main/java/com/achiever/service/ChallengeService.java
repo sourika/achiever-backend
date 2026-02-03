@@ -26,6 +26,7 @@ public class ChallengeService {
     private final ChallengeParticipantRepository participantRepository;
     private final DailyProgressRepository progressRepository;
     private final StravaSyncService stravaSyncService;
+    private final NotificationService notificationService;
 
     private static final String INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int INVITE_CODE_LENGTH = 8;
@@ -198,10 +199,17 @@ public class ChallengeService {
             challengeRepository.save(challenge);
         }
 
+        // Notify creator that opponent joined
+        notificationService.notifyOpponentJoined(challenge.getCreatedBy(), user, challenge);
+
+        // If challenge became ACTIVE immediately, notify both
+        if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
+            notificationService.notifyChallengeStarted(challenge);
+        }
+
         // Sync Strava data for joining user if challenge is already active
         if (challenge.getStatus() == ChallengeStatus.ACTIVE && user.getStravaConnection() != null) {
             try {
-                // Sync exactly for challenge period: startAt → today
                 stravaSyncService.syncActivitiesForDateRange(
                         user.getId(),
                         challenge.getStartAt(),
@@ -267,6 +275,11 @@ public class ChallengeService {
             challenge.setStatus(ChallengeStatus.COMPLETED);
             challenge.setWinner(opponent);
             challengeRepository.save(challenge);
+
+            // Notify opponent they won
+            if (opponent != null) {
+                notificationService.notifyOpponentForfeited(user, opponent, challenge);
+            }
 
             log.info("User {} forfeited challenge {}. Winner: {}",
                     user.getId(), challengeId,
@@ -437,6 +450,7 @@ public class ChallengeService {
             challenge.setStatus(ChallengeStatus.EXPIRED);
             changed = true;
             log.info("Challenge {} expired (no opponent joined)", challenge.getId());
+            notificationService.notifyChallengeExpired(challenge);
         }
 
         // SCHEDULED -> ACTIVE (start date reached)
@@ -444,6 +458,7 @@ public class ChallengeService {
             challenge.setStatus(ChallengeStatus.ACTIVE);
             changed = true;
             log.info("Challenge {} activated (lazy)", challenge.getId());
+            notificationService.notifyChallengeStarted(challenge);
         }
 
         // ACTIVE -> COMPLETED (end date passed)
@@ -458,6 +473,7 @@ public class ChallengeService {
             log.info("Challenge {} completed (lazy), winner: {}",
                     challenge.getId(),
                     winner != null ? winner.getUsername() : "tie");
+            notificationService.notifyChallengeCompleted(challenge, winner);
         }
 
         if (changed) {
@@ -495,7 +511,6 @@ public class ChallengeService {
             }
 
             try {
-                // Sync exactly for challenge period: startAt → today
                 stravaSyncService.syncActivitiesForDateRange(
                         user.getId(),
                         challenge.getStartAt(),
