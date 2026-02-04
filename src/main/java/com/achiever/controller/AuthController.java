@@ -40,14 +40,19 @@ public class AuthController {
      * Redirect to Strava OAuth
      */
     @GetMapping("/strava")
-    public RedirectView stravaAuth(@RequestParam(required = false) String prompt) {
-        String scope = "read,activity:read_all";  // Было: read,activity:read
+    public RedirectView stravaAuth(@RequestParam(required = false) String prompt,
+                                   @RequestParam(required = false) String email) {
+        String scope = "read,activity:read_all";
+
+        // Encode email in state parameter to pass through OAuth flow
+        String state = email != null ? java.util.Base64.getUrlEncoder().encodeToString(email.getBytes()) : "";
 
         String url = "https://www.strava.com/oauth/authorize" +
                 "?client_id=" + clientId +
                 "&response_type=code" +
                 "&redirect_uri=" + redirectUri +
-                "&scope=" + scope;
+                "&scope=" + scope +
+                "&state=" + state;
 
         if ("consent".equals(prompt)) {
             url += "&approval_prompt=force";
@@ -56,13 +61,11 @@ public class AuthController {
         return new RedirectView(url);
     }
 
-    /**
-     * Handle Strava OAuth callback
-     */
     @GetMapping("/strava/callback")
     public RedirectView stravaCallback(
             @RequestParam(required = false) String code,
-            @RequestParam(required = false) String error) {
+            @RequestParam(required = false) String error,
+            @RequestParam(required = false) String state) {
 
         if (error != null || code == null) {
             log.warn("Strava auth error: {}", error);
@@ -70,15 +73,20 @@ public class AuthController {
         }
 
         try {
-            AuthResponse response = authService.handleStravaCallback(code);
-            
-            // Redirect to frontend with token
+            // Decode email from state
+            String email = null;
+            if (state != null && !state.isEmpty()) {
+                email = new String(java.util.Base64.getUrlDecoder().decode(state));
+            }
+
+            AuthResponse response = authService.handleStravaCallback(code, email);
+
             String redirectUrl = String.format(
                     "%s/auth/callback?token=%s",
                     frontendUrl,
                     response.token()
             );
-            
+
             return new RedirectView(redirectUrl);
         } catch (Exception e) {
             log.error("Strava callback error", e);

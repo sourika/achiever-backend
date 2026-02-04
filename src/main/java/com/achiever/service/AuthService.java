@@ -30,7 +30,7 @@ public class AuthService {
     private final JwtUtils jwtUtils;
 
     @Transactional
-    public AuthResponse handleStravaCallback(String code) {
+    public AuthResponse handleStravaCallback(String code, String pendingEmail) {
         StravaTokenResponse tokenResponse = stravaApiClient.exchangeCode(code);
         StravaAthleteResponse athlete = tokenResponse.getAthlete();
 
@@ -46,7 +46,18 @@ public class AuthService {
             user = connection.getUser();
             log.info("Existing user logged in: {}", user.getId());
         } else {
-            user = createNewUser(athlete, tokenResponse);
+            // Use the email from the frontend, not from Strava
+            String emailToUse = pendingEmail != null && !pendingEmail.isEmpty()
+                    ? pendingEmail.toLowerCase().trim()
+                    : (athlete.getEmail() != null ? athlete.getEmail() : generateUsername(athlete) + "@strava.local");
+
+            // Check if email is already taken by another user
+            Optional<User> existingUser = userRepository.findByEmail(emailToUse);
+            if (existingUser.isPresent()) {
+                throw new RuntimeException("Email already in use by another account");
+            }
+
+            user = createNewUser(athlete, tokenResponse, emailToUse);
             log.info("New user created: {}", user.getId());
         }
 
@@ -55,26 +66,12 @@ public class AuthService {
         return new AuthResponse(token, mapToUserDTO(user));
     }
 
-    /**
-     * Generate token for email/password login
-     */
-    public String generateToken(User user) {
-        return jwtUtils.generateToken(user.getId(), user.getEmail());
-    }
-
-    /**
-     * Validate token and extract user ID
-     */
-    public UUID validateTokenAndGetUserId(String token) {
-        return jwtUtils.getUserIdFromToken(token);
-    }
-
-    private User createNewUser(StravaAthleteResponse athlete, StravaTokenResponse tokens) {
+    private User createNewUser(StravaAthleteResponse athlete, StravaTokenResponse tokens, String email) {
         String username = generateUsername(athlete);
 
         User user = User.builder()
                 .username(username)
-                .email(athlete.getEmail() != null ? athlete.getEmail() : username + "@strava.local")
+                .email(email)
                 .timezone("America/Los_Angeles")
                 .build();
 
@@ -92,6 +89,20 @@ public class AuthService {
         user.setStravaConnection(connection);
 
         return user;
+    }
+
+    /**
+     * Generate token for email/password login
+     */
+    public String generateToken(User user) {
+        return jwtUtils.generateToken(user.getId(), user.getEmail());
+    }
+
+    /**
+     * Validate token and extract user ID
+     */
+    public UUID validateTokenAndGetUserId(String token) {
+        return jwtUtils.getUserIdFromToken(token);
     }
 
     private void updateStravaTokens(StravaConnection connection, StravaTokenResponse tokens) {
@@ -113,10 +124,6 @@ public class AuthService {
             username = base + counter++;
         }
         return username;
-    }
-
-    public UserDTO getCurrentUser(User user) {
-        return mapToUserDTO(user);
     }
 
     private UserDTO mapToUserDTO(User user) {
