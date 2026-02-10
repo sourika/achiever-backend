@@ -214,8 +214,8 @@ fly secrets set \
   STRAVA_CLIENT_ID=your_id \
   STRAVA_CLIENT_SECRET=your_secret \
   JWT_SECRET=your_secret \
-  APP_BASE_URL=https://your-app.fly.dev \
-  FRONTEND_URL=https://your-frontend.vercel.app \
+  APP_BASE_URL=https://api.achiever.fit \
+  FRONTEND_URL=https://www.achiever.fit \
   SPRING_PROFILES_ACTIVE=prod
 ```
 
