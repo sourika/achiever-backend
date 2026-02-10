@@ -1,11 +1,24 @@
-# Achievr Backend
+# Achiever Backend
 
-Fitness challenge platform with Strava integration. Built with Spring Boot 3, PostgreSQL, and Java 21.
+Fitness challenge platform with Strava integration.
+
+Turn fitness into a fair game: integrate your Strava, set your own targets, and challenge friends to see who can get closest to their personal 100% within the deadline.
+
+Built with Spring Boot 3, PostgreSQL, and Java 21.
+
+## Features
+
+- **Email/Password Authentication** + Strava OAuth
+- **Multi-sport Challenges** — Run, Ride, Swim, Walk
+- **Challenge Lifecycle** — PENDING → SCHEDULED → ACTIVE → COMPLETED/EXPIRED
+- **Real-time Progress Tracking** — syncs with Strava
+- **In-app Notifications** — challenge updates, invites, results
+- **Automated Daily Processing** — midnight cron job for status updates and winner determination
 
 ## Prerequisites
 
 - Java 21+
-- PostgreSQL 16+
+- PostgreSQL 15+
 - Strava API Application (create at https://www.strava.com/settings/api)
 
 ## Quick Start
@@ -13,31 +26,30 @@ Fitness challenge platform with Strava integration. Built with Spring Boot 3, Po
 ### 1. Database Setup
 
 ```bash
-# Create database
 createdb achiever
-
-# Or with psql
-psql -c "CREATE DATABASE achiever;"
 ```
 
 ### 2. Configure Environment
 
-Create `.env` and fill in your values:
+Create `.env` file with:
 
-Required variables:
-- `STRAVA_CLIENT_ID` - from Strava API settings
-- `STRAVA_CLIENT_SECRET` - from Strava API settings
-- `JWT_SECRET` - generate with: `openssl rand -base64 32`
+| Variable | Description |
+|----------|-------------|
+| `DB_HOST` | Database host (default: localhost) |
+| `DB_PORT` | Database port (default: 5432) |
+| `DB_NAME` | Database name (default: achiever) |
+| `DB_USERNAME` | Database user (default: postgres) |
+| `DB_PASSWORD` | Database password |
+| `STRAVA_CLIENT_ID` | From Strava API settings |
+| `STRAVA_CLIENT_SECRET` | From Strava API settings |
+| `JWT_SECRET` | Generate with: `openssl rand -base64 32` |
+| `APP_BASE_URL` | Backend URL (default: http://localhost:8080) |
+| `FRONTEND_URL` | Frontend URL (default: http://localhost:5173) |
 
 ### 3. Run the Application
 
 ```bash
-# With Maven
 ./mvnw spring-boot:run
-
-# Or build and run JAR
-./mvnw clean package
-java -jar target/achiever-backend-0.0.1-SNAPSHOT.jar
 ```
 
 Server starts at `http://localhost:8080`
@@ -48,128 +60,179 @@ Server starts at `http://localhost:8080`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/auth/check-email?email=` | Check if email exists, has password |
+| POST | `/api/auth/login` | Login with email/password |
+| POST | `/api/auth/set-password` | Set password (authenticated) |
 | GET | `/api/auth/strava` | Redirect to Strava OAuth |
-| GET | `/api/auth/strava/callback` | OAuth callback (handled automatically) |
+| GET | `/api/auth/strava/callback` | OAuth callback |
 | GET | `/api/auth/me` | Get current user |
 
 ### Challenges
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/challenges` | Create new challenge |
+| POST | `/api/challenges` | Create challenge |
 | GET | `/api/challenges/{id}` | Get challenge by ID |
+| PATCH | `/api/challenges/{id}` | Update challenge |
+| DELETE | `/api/challenges/{id}` | Delete challenge |
 | GET | `/api/challenges/invite/{code}` | Get challenge by invite code (public) |
 | POST | `/api/challenges/invite/{code}/join` | Join challenge |
+| POST | `/api/challenges/{id}/leave` | Leave (forfeit) challenge |
 | GET | `/api/challenges/{id}/progress` | Get challenge progress |
-| POST | `/api/challenges/{id}/sync` | Sync Strava & get progress |
+| POST | `/api/challenges/{id}/sync` | Sync Strava data |
 | GET | `/api/challenges/my` | Get user's challenges |
 | GET | `/api/challenges/my/active` | Get user's active challenges |
 
-## Request/Response Examples
+### Notifications
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/notifications` | Get all notifications |
+| GET | `/api/notifications/unread-count` | Get unread count |
+| POST | `/api/notifications/read` | Mark all as read |
+
+## Request Examples
+
+### Login
+```bash
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
 
 ### Create Challenge
-
 ```bash
 POST /api/challenges
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "sportType": "RUN",
-  "goalValue": 50.0,
-  "startAt": "2024-01-15",
-  "endAt": "2024-01-21"
+  "name": "February Running Challenge",
+  "goals": {
+    "RUN": 50,
+    "RIDE": 100
+  },
+  "startAt": "2025-02-01",
+  "endAt": "2025-02-28",
+  "timezone": "America/Los_Angeles"
 }
 ```
 
 ### Join Challenge
-
 ```bash
 POST /api/challenges/invite/ABC123XY/join
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "goalValue": 75.0
+  "goals": {
+    "RUN": 75,
+    "RIDE": 80
+  }
 }
 ```
 
-## Strava API Setup
+## Challenge Statuses
 
-1. Go to https://www.strava.com/settings/api
-2. Create an application
-3. Set Authorization Callback Domain to `localhost` (for dev)
-4. Copy Client ID and Client Secret to `.env`
-
-**Important:** In production, update the callback domain to your actual domain.
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Created, waiting for opponent to join |
+| `SCHEDULED` | Opponent joined, waiting for start date |
+| `ACTIVE` | In progress |
+| `COMPLETED` | Ended, winner determined |
+| `EXPIRED` | No one joined before end date |
 
 ## Scheduled Tasks
 
 | Task | Schedule | Description |
 |------|----------|-------------|
-| Strava Sync | Every 10 min | Syncs activities for users in active challenges |
-| Activate Challenges | Every hour | Activates pending challenges that should start |
-| Complete Challenges | Every hour | Completes challenges that have ended |
-| Weekly Results | Mon 00:05 | Calculates weekly winners |
+| Midnight Sync | Daily 00:00 UTC | Updates statuses, syncs Strava, determines winners |
+
+### Midnight Job Actions:
+1. **PENDING → EXPIRED** — if end date passed without opponent
+2. **SCHEDULED → ACTIVE** — if start date reached
+3. **Sync Strava** — for all active challenge participants
+4. **ACTIVE → COMPLETED** — if end date passed, determine winner
 
 ## Project Structure
 
 ```
 src/main/java/com/achiever/
-├── AchieverApplication.java     # Main class
-├── config/                     # Security, JWT config
-├── controller/                 # REST endpoints
-├── dto/                        # Request/Response DTOs
-├── entity/                     # JPA entities
-├── repository/                 # Data access
-├── service/                    # Business logic
-└── strava/                     # Strava API integration
+├── AchieverApplication.java
+├── config/          # Security, JWT configuration
+├── controller/      # REST endpoints
+├── dto/             # Request/Response objects
+├── entity/          # JPA entities
+├── repository/      # Data access layer
+├── service/         # Business logic & scheduler
+└── strava/          # Strava API integration
 ```
 
-## Development
-
-### Run Tests
+## Testing
 
 ```bash
+# Run all tests
 ./mvnw test
+
+# Run with coverage
+./mvnw test jacoco:report
 ```
 
-### Code Formatting
+Tests include:
+- **Unit tests** — services with mocked dependencies
+- **Integration tests** — full API tests with test database
 
-Uses standard Java conventions. Recommend IntelliJ IDEA or VS Code with Java extension.
+## Deployment (Fly.io)
 
-## Deployment
+### Initial Setup
 
-### Fly.io (Current)
-
-1. Install Fly CLI: `powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"`
-2. Login: `fly auth login`
-3. Create app: `fly launch --no-deploy`
-4. Create Postgres: `fly postgres create --name achiever-db --region sjc --vm-size shared-cpu-1x --volume-size 1`
-5. Attach database: `fly postgres attach achiever-db --app achiever-backend`
-6. Set secrets:
 ```bash
-fly secrets set DB_HOST=achiever-db.internal DB_PORT=5432 DB_NAME=achiever_backend DB_USERNAME=achiever_backend DB_PASSWORD= STRAVA_CLIENT_ID= STRAVA_CLIENT_SECRET= JWT_SECRET= APP_BASE_URL=https://achiever-backend.fly.dev SPRING_PROFILES_ACTIVE=prod --app achiever-backend
+# Install Fly CLI
+brew install flyctl
+
+# Login
+fly auth login
+
+# Launch app
+fly launch --no-deploy
+
+# Create Postgres
+fly postgres create --name achiever-db
+
+# Attach database
+fly postgres attach achiever-db
 ```
-7. Deploy: `fly deploy`
 
-**Production URL:** https://achiever-backend.fly.dev
+### Set Secrets
 
-### Docker
-
-```dockerfile
-FROM maven:3.9-eclipse-temurin-21 AS build
-WORKDIR /app
-COPY pom.xml .
-COPY src ./src
-RUN mvn clean package -DskipTests
-
-FROM eclipse-temurin:21-jre
-WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java", "-Xmx384m", "-Xms128m", "-XX:+UseSerialGC", "-jar", "app.jar"]
+```bash
+fly secrets set \
+  STRAVA_CLIENT_ID=your_id \
+  STRAVA_CLIENT_SECRET=your_secret \
+  JWT_SECRET=your_secret \
+  APP_BASE_URL=https://your-app.fly.dev \
+  FRONTEND_URL=https://your-frontend.vercel.app \
+  SPRING_PROFILES_ACTIVE=prod
 ```
+
+### Deploy
+
+```bash
+fly deploy
+```
+
+## Tech Stack
+
+- **Framework:** Spring Boot 3.4
+- **Language:** Java 21
+- **Database:** PostgreSQL 15+
+- **Migrations:** Flyway
+- **Auth:** JWT + Strava OAuth2
+- **Deployment:** Fly.io
 
 ## License
 
