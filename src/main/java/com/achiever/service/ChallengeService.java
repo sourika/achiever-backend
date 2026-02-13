@@ -25,6 +25,7 @@ public class ChallengeService {
     private final ChallengeRepository challengeRepository;
     private final ChallengeParticipantRepository participantRepository;
     private final DailyProgressRepository progressRepository;
+    private final UserRepository userRepository;
     private final StravaSyncService stravaSyncService;
     private final NotificationService notificationService;
 
@@ -208,15 +209,19 @@ public class ChallengeService {
         }
 
         // Sync Strava data for joining user if challenge is already active
-        if (challenge.getStatus() == ChallengeStatus.ACTIVE && user.getStravaConnection() != null) {
+        // Uses REQUIRES_NEW transaction in StravaSyncService so failures don't rollback the join
+        if (challenge.getStatus() == ChallengeStatus.ACTIVE) {
             try {
-                stravaSyncService.syncActivitiesForDateRange(
-                        user.getId(),
-                        challenge.getStartAt(),
-                        today
-                );
-                log.info("Synced Strava for joining user {} from {} to {}",
-                        user.getUsername(), challenge.getStartAt(), today);
+                User freshUser = userRepository.findById(user.getId()).orElse(null);
+                if (freshUser != null && freshUser.getStravaConnection() != null) {
+                    stravaSyncService.syncActivitiesForDateRange(
+                            user.getId(),
+                            challenge.getStartAt(),
+                            today
+                    );
+                    log.info("Synced Strava for joining user {} from {} to {}",
+                            user.getUsername(), challenge.getStartAt(), today);
+                }
             } catch (Exception e) {
                 log.warn("Failed to sync Strava for joining user {}: {}", user.getUsername(), e.getMessage());
             }

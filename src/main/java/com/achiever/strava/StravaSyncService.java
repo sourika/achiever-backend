@@ -5,6 +5,7 @@ import com.achiever.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -30,34 +31,10 @@ public class StravaSyncService {
     private final DailyProgressRepository progressRepository;
 
     /**
-     * Sync activities for a specific user (last 30 days)
-     */
-    @Transactional
-    public void syncUserActivities(UUID userId) {
-        StravaConnection connection = connectionRepository.findById(userId)
-                .orElseThrow(() -> new IllegalStateException("No Strava connection for user " + userId));
-
-        // Fetch last 30 days of activities
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        OffsetDateTime thirtyDaysAgo = now.minusDays(30);
-
-        List<StravaActivityResponse> activities = stravaApiClient.getActivities(
-                connection, thirtyDaysAgo, now, 1, 100);
-
-        log.info("Fetched {} activities for user {}", activities.size(), userId);
-
-        int newCount = saveActivities(activities, connection.getUser());
-
-        log.info("Saved {} new activities for user {}", newCount, userId);
-
-        // Update progress for active challenges
-        updateProgressForUser(userId);
-    }
-
-    /**
      * Sync activities for a specific date range (used when opponent joins active challenge)
+     * REQUIRES_NEW: runs in separate transaction so failures don't rollback the parent (join) transaction
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void syncActivitiesForDateRange(UUID userId, LocalDate fromDate, LocalDate toDate) {
         StravaConnection connection = connectionRepository.findById(userId)
                 .orElseThrow(() -> new IllegalStateException("No Strava connection for user " + userId));
